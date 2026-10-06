@@ -1,0 +1,34 @@
+{
+  "id": "hk-rental-comps",
+  "name": "HK Rental Comps + Term & Reversion",
+  "description": "Direct comparison rental valuation for a commercial/industrial unit, with the Term & Reversion income block. Produces a live-formula .xlsx using the CHFT colour convention (blue = input, black = formula, green = cross-sheet, yellow = headline).",
+  "version": "1.0.0",
+  "outputs": [
+    {
+      "type": "xlsx",
+      "name": "Comps + T&R workbook",
+      "description": "One workbook, three sheets (Comps, Summary, Term & Reversion)"
+    }
+  ],
+  "fields": [
+    { "key": "subject_address", "label": "Subject address", "type": "str", "section": "Subject" },
+    { "key": "subject_sa", "label": "Subject saleable area", "type": "float", "unit": "sqm", "minimum": 1, "section": "Subject" },
+    { "key": "subject_ac_platform", "label": "Subject ancillary platform", "type": "float", "unit": "sqm", "section": "Subject",
+      "help": "Ancillary platform area, excluded from saleable area" },
+    { "key": "subject_ac_pct", "label": "Subject platform weighting", "type": "pct", "section": "Subject",
+      "help": "e.g. 50% means the platform counts half weight" },
+    { "key": "subject_price_index", "label": "Subject price index", "type": "float", "minimum": 1, "section": "Subject",
+      "help": "RVD index at the valuation date" },
+    { "key": "val_date", "label": "Valuation date", "type": "date", "section": "Subject" },
+    { "key": "valuer", "label": "Valuer", "type": "str", "section": "Subject" },
+
+    { "key": "comps", "label": "Comparable rentals", "type": "list", "section": "Comparables",
+      "help": "Each entry: address, rent, sa, price_index, plus optional year/date/floor/aspect/ancillary platform and the five adjustments (floor, quality, sun-weather-view, age, location)." },
+
+    { "key": "adopted_unit_rate", "label": "Adopted unit rate", "type": "currency", "unit": "HK$/sqm", "minimum": 0, "section": "Conclusion",
+      "help": "The valuer's concluded rate. Driven from the adjusted comparables." },
+    { "key": "term_years", "label": "Initial term", "type": "int", "unit": "years", "minimum": 1, "section": "Conclusion" },
+    { "key": "term_rate", "label": "Term discount rate", "type": "pct", "section": "Conclusion" },
+    { "key": "reversion_rate", "label": "Reversion capitalisation rate", "type": "pct", "section": "Conclusion" }
+  ]
+}
