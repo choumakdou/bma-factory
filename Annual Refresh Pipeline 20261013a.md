@@ -112,3 +112,71 @@ OFFSET(RVD!$A$1, MATCH($A2, RVD!$R:$R, 1)-1, 19)
 not the index column, this returns a plausible number with no error. Since this
 step is about to be automated across every client file, it is worth confirming
 — a `SUMIFS` against a date column has no offset arithmetic to get wrong.
+
+---
+
+## 6. Standing treatments (property rules)
+
+Some properties carry a treatment that is not recalculated each year: a narrowed
+set of acceptable buildings for comparables, a location adjustment reflecting a
+characteristic of the building rather than a market movement, a mandatory
+disclosure, a method the client requires.
+
+Without these stored they live in the valuer's memory and in last year's file.
+Miss one and the value is wrong with nothing to catch it.
+
+### Two kinds of adjustment, kept apart
+
+| | moves with | handling |
+|---|---|---|
+| `time` | the RVD index | **recomputed** every year |
+| `floor`, `location`, `age`, … | the asset | **carried forward**, reviewed deliberately |
+
+The schema refuses to store a pinned time adjustment at write time, so a
+time-varying factor cannot be quietly frozen by accident.
+
+### Rule types
+
+| Type | Carries |
+|---|---|
+| `comp_allowlist` | the only buildings comparables may come from |
+| `comp_denylist` | buildings never to be used |
+| `adjustment_override` | a pinned factor, e.g. `{"adj": "location", "pct": -0.04}` |
+| `mandatory_note` | a disclosure, with `insert_in` so the report knows where |
+| `method_override` | a method the client or asset requires |
+
+Every rule requires a **rationale**. A bare number with no reason cannot be
+reviewed by anyone, including the person who set it, two years later.
+
+### Governance, not just storage
+
+A carried-forward rule that nobody has looked at in three years is a liability,
+not a fact. So `last_reviewed` and `carried_count` are first-class, and staleness
+is a query.
+
+**Carrying a rule forward is not reviewing it** — `mark_carried()` deliberately
+leaves `last_reviewed` alone. Conflating the two lets a treatment be reused for
+a decade while always looking freshly checked. Reviewing is a human action and
+goes through `mark_reviewed()`.
+
+```
+carried 3x, last reviewed 2024-03-11  →  🟡 not reviewed for 2y 216d
+after mark_reviewed()                →  clear
+```
+
+### Method drift vs data drift
+
+A value can move because the market moved, or because the treatment moved. Those
+are different events and only one of them is the market. `method_drift()`
+compares the rules in force for a prior date against the current set, so a change
+report can say which one the number reflects.
+
+### Effective dating
+
+Rules carry `effective_from` / `effective_to` and a rule is ended rather than
+deleted. That is what makes "which treatments applied to last year's valuation"
+answerable — without which a change report cannot explain a movement.
+
+Implemented in `ingest/rules.py`; 20 tests in `tests/test_rules.py` covering the
+refusals, effective dating, the carried-vs-reviewed distinction, allow/deny
+precedence, and method drift.
