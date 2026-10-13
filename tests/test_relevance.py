@@ -186,7 +186,7 @@ class TestMapContract(unittest.TestCase):
         self.assertEqual(c["count"], "1")
 
     def test_multiple_transactions_join_with_the_tilde(self):
-        """The shape V-ALE-303767-2026_map.html was built around."""
+        """GenerateMap_PPA replaces the sheet separator ^ with ~~~."""
         multi = {**COMPS[0], "transactions": [
             {"date": "2026-03-23", "area_sf": 806, "price": 14_380_000, "floor": "38", "flat": "C"},
             {"date": "2025-11-02", "area_sf": 800, "price": 13_900_000, "floor": "35", "flat": "C"},
@@ -200,13 +200,15 @@ class TestMapContract(unittest.TestCase):
         self.assertEqual(loc["srcRows"], "3,9")
 
     def test_txn_fields_are_pipe_delimited(self):
+        """CHFT Map ver 8.0 writes 13 positional fields per transaction."""
         c = [l for l in self.loc if l["isSubject"] == 0][0]
         parts = c["txnText"].split("~~~")[0].split("|")
-        self.assertEqual(len(parts), 7)
+        self.assertEqual(len(parts), 13)
 
-    def test_price_range_formatted_like_the_existing_tool(self):
-        self.assertRegex(self.loc[0]["priceRange"], r"\$[\d.]+M-\$[\d.]+M")
-        self.assertRegex(self.loc[1]["priceRange"], r"^\$[\d.]+M$")
+    def test_price_range_uses_the_v80_format(self):
+        """VBA FormatPrice scales B/M/K/mil and prefixes HK$."""
+        self.assertRegex(self.loc[1]["priceRange"], r"^(HK\$[\d.,]+|N/A)")
+        self.assertTrue(self.loc[0]["priceRange"])
 
     def test_rank_order_is_preserved(self):
         for i, s in enumerate(self.sel.adopted, start=1):

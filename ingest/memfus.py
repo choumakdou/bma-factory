@@ -203,16 +203,14 @@ def _street_number(row: dict) -> str:
 def build_address(row: dict) -> str:
     """The geocode query. Street number + street, then city — the shape
     Nominatim resolves best, and the same shape the review sheet asks for."""
-    parts = []
-    n = _street_number(row)
-    if n:
-        parts.append(n)
     street = str(row.get("ST_E_NAME") or "").strip()
+    n = _street_number(row)
+    if n and street:
+        # space-joined, exactly as PrepareAddresses_PPA builds fullAddr
+        return f"{n} {street}, Hong Kong"
     if street:
-        parts.append(street)
-    if not parts:
-        parts.append(str(row.get("BLD_E_NAME") or "").strip())
-    return ", ".join(p for p in parts if p) + ", Hong Kong"
+        return f"{street}, Hong Kong"
+    return "Hong Kong"
 
 
 def display_name(row: dict) -> str:
@@ -257,17 +255,68 @@ def split_subject(comps: Sequence[Comp]) -> tuple[Comp | None, list[Comp]]:
 
 # --- txnText ----------------------------------------------------------------
 
-def txn_text(c: Comp, label: str) -> str:
-    """The pipe-delimited blob the generated HTML already parses."""
+def format_price_mil(v: Any) -> str:
+    """Mirror of VBA FormatPrice. Note the <1000 branch appends "mil" — the
+    formatter hardcodes the assumption that CONSIDERTN is in millions, so a
+    source that reports dollars renders confidently wrong rather than failing."""
+    n = _num(v)
+    if n is None:
+        return "N/A"
+    if n == 0:
+        return "N/A"
+    if n >= 1_000_000_000:
+        return f"HK${n / 1_000_000_000:.2f}B"
+    if n >= 1_000_000:
+        return f"HK${n / 1_000_000:.2f}M"
+    if n >= 1_000:
+        return f"HK${n / 1_000:.1f}K"
+    return f"HK${n:g}mil"
+
+
+def format_psf(v: Any) -> str:
+    """Mirror of VBA FormatPSF: empty string at or below zero, raw passthrough
+    on a non-numeric."""
+    n = _num(v)
+    if n is not None:
+        return "" if n <= 0 else f"HK${n:,.0f}/sqft"
+    return "" if str(v or "").strip() == "" else str(v).strip()
+
+
+def txn_text(c: Comp) -> str:
+    """The 13-field pipe-delimited blob, in PrepareAddresses_PPA's exact order:
+
+    CP_PT|UNIT|FLOOR|BLOCK|PHASE|PRICE|NAT_INST|AGREE_DATE|AREA|USAGE|OP_DATE|GROSS_PSF|NET_PSF
+
+    The `no` label is NOT part of the blob — the VBA does not write one, and
+    parseTxnLine reads these positionally.
+    """
+    r = c.row
     return "|".join([
-        label,
-        c.flat or str(c.row.get("CP_PT") or ""),
-        str(c.row.get("NAT_INST") or ""),
-        c.date.strftime("%-d/%-m/%Y") if c.date else "",
-        f"HK${c.price_hkd / 1_000_000:g}mil" if c.price_hkd else "",
-        f"{c.area_sf:,.0f}sf" if c.area_sf else "",
-        str(c.row.get("CP_PT") or ""),
+        str(r.get("CP_PT") or "").strip(),
+        str(r.get("UNIT") or "").strip(),
+        str(r.get("FLOOR") or "").strip(),
+        str(r.get("BLOCK") or "").strip(),
+        str(r.get("PHASE") or "").strip(),
+        format_price_mil(r.get("CONSIDERTN")),
+        str(r.get("NAT_INST") or "").strip(),
+        c.date.strftime("%d/%m/%Y") if c.date else "",
+        str(r.get("TOTNFA") or "").strip(),
+        str(r.get("PUSAGE") or "").strip(),
+        str(r.get("OP_DATE") or "").strip(),
+        format_psf(r.get("GROSS_PSF")),
+        format_psf(r.get("NET_PSF")),
     ])
+
+
+def txn_blob(comps: Sequence["Comp"], sep: str = "^") -> str:
+    """Several transactions at one location, joined by the sheet separator `^`.
+    GenerateMap_PPA replaces `^` with `~~~` when it builds the JS array."""
+    return sep.join(txn_text(c) for c in comps)
+
+
+def group_key(row: dict) -> str:
+    """Mirror of the VBA locKey: UCase(dispName) & '|' & UCase(street)."""
+    return f"{display_name(row).upper()}|{str(row.get('ST_E_NAME') or '').strip().upper()}"
 
 
 def price_label(v: float | None) -> str:

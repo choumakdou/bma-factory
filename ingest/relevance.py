@@ -302,15 +302,20 @@ def equal_weighted_rate(adopted: list[Scored]) -> float | None:
 # --- output shape for the existing HTML map tool ----------------------------
 
 def _fmt_price(v: Any) -> str:
+    """Dollars in, CHFT Map ver 8.0's FormatPrice string out.
+
+    The generic path carries `price` in dollars; the VBA formatter takes
+    CONSIDERTN in millions and scales B/M/K/mil. Dividing here is the only
+    place those two conventions meet.
+    """
+    from .memfus import format_price_mil
     n = _num(v)
-    if n is None:
-        return ""
-    return f"${n / 1_000_000:.2f}M" if n >= 1_000_000 else f"${n:,.0f}"
+    return format_price_mil(n / 1_000_000.0) if n is not None else ""
 
 
 def _fmt_rate(v: Any) -> str:
-    n = _num(v)
-    return f"${n:,.0f}/sf" if n else ""
+    from .memfus import format_psf
+    return format_psf(v)
 
 
 def txn_line(rec: dict) -> str:
@@ -330,6 +335,45 @@ def txn_line(rec: dict) -> str:
     ])
 
 
+def _blob_for(c) -> str:
+    """One transaction, or several joined with the JS separator.
+
+    The VBA stores `^` in the review sheet and `GenerateMap_PPA` replaces it
+    with `~~~` when it builds the array, so `~~~` is what the HTML parses.
+    """
+    txns = c.get("transactions") if isinstance(c, dict) else None
+    if isinstance(txns, list) and txns:
+        return "~~~".join(comp_to_txn({**c, **t, "transactions": None}) for t in txns)
+    return comp_to_txn(c)
+
+
+def comp_to_txn(c) -> str:
+    """Build the transaction blob in CHFT Map ver 8.0's 13-field format.
+
+    A `memfus.Comp` already carries its source row, so it is formatted by the
+    memfus module and the contract lives in exactly one place. A plain dict —
+    the generic scoring path — is formatted here against the same field order.
+    """
+    if hasattr(c, "row"):
+        from .memfus import txn_text as _mfmt
+        return _mfmt(c)
+    return "|".join([
+        str(c.get("cp_pt", "")),
+        str(c.get("flat", "")),
+        str(c.get("floor", "")),
+        str(c.get("block", "")),
+        str(c.get("phase", "")),
+        _fmt_price(c.get("price")),
+        str(c.get("nat_inst", "")),
+        (c.get("date") or ""),
+        str(c.get("area_sf", "")),
+        str(c.get("usage", "")),
+        str(c.get("op_date", "")),
+        _fmt_rate(c.get("gross_psf")),
+        _fmt_rate(c.get("net_psf")),
+    ])
+
+
 def txn_text(rec: dict) -> str:
     """The tilde-joined transaction block the existing tool already parses.
 
@@ -337,10 +381,7 @@ def txn_text(rec: dict) -> str:
     when a location carries more than one, which is the shape
     V-ALE-303767-2026_map.html was built around (`srcRows: "2,3,4,5,6"`).
     """
-    txns = rec.get("transactions")
-    if isinstance(txns, list) and txns:
-        return "~~~".join(txn_line({**rec, **t}) for t in txns)
-    return txn_line(rec)
+    return _blob_for(rec)
 
 
 def to_locations(subject: dict, sel: Selection, ranked: list[Scored],
@@ -378,7 +419,7 @@ def to_locations(subject: dict, sel: Selection, ranked: list[Scored],
             "priceRange": _fmt_price(c.get("price")),
             "srcRows": c.get("srcRows", ""),
             "isSubject": 0,
-            "txnText": txn_text({**c, "no": f"C{i}"}),
+            "txnText": _blob_for(c),
             "_score": s.total,
             "_breakdown": s.breakdown,
         })
