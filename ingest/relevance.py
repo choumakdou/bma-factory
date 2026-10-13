@@ -248,23 +248,45 @@ class Selection:
     excluded_self: list[tuple[Scored, str]]
     considered: int
     weighting: str = "equal"
+    below_floor: list[Scored] = field(default_factory=list)
+    floor: float = 0.0
 
     @property
     def warning(self) -> str | None:
-        return None if self.adopted else "no comparable passed the relevancy gate"
+        if not self.adopted:
+            return ("no comparable reached the relevancy floor — the evidence is not "
+                    "good enough to adopt a rate; widen the search or gather more "
+                    "transactions rather than adopting the least-bad option")
+        if len(self.adopted) < 3:
+            return (f"only {len(self.adopted)} comparable(s) cleared the floor — "
+                    "a rate from fewer than three is not supportable")
+        if self.below_floor:
+            return f"{len(self.below_floor)} ranked below the floor of {self.floor:.2f}"
+        return None
 
 
-def select(ranked: list[Scored], subject: dict, n: int = 5, weighting: str = "equal") -> Selection:
-    """Top n by relevancy, equal weighting, with the subject removed from the pool."""
+def select(ranked: list[Scored], subject: dict, n: int = 5, weighting: str = "equal",
+           min_score: float = 0.0) -> Selection:
+    """Top n by relevancy, equal weighting, with the subject removed from the pool.
+
+    `min_score` exists because "the best of a bad set" is not evidence. Without
+    a floor, a 194-row market-wide extract will always return five comps and an
+    equal-weighted mean — and that number looks exactly as authoritative as one
+    built from good evidence. The floor makes "there is nothing here" a possible
+    answer, which is the honest one.
+    """
     kept: list[Scored] = []
     dropped: list[tuple[Scored, str]] = []
+    below: list[Scored] = []
     for s in ranked:
         hit, why = is_self(subject, s.comp)
         if hit:
             dropped.append((s, why))
+        elif s.total < min_score:
+            below.append(s)
         else:
             kept.append(s)
-    return Selection(kept[:n], dropped, len(ranked), weighting)
+    return Selection(kept[:n], dropped, len(ranked), weighting, below, min_score)
 
 
 def equal_weighted_rate(adopted: list[Scored]) -> float | None:
