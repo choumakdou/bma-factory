@@ -69,19 +69,16 @@ jobs:
         run: |
           echo "==> Deploying ${{ env.SERVICE }} to ${{ env.REGION }}"
 
-          # gcloud run deploy --update-secrets and --set-env-vars both
-          # take comma-separated key=value pairs in a SINGLE argument.
-          # Building them as a list and joining with commas.
-
-          SECRETS_LIST=("GOOGLE_APPLICATION_CREDENTIALS=${{ env.SECRET_NAME }}:latest")
-          if [ -n "${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}" ]; then
-            SECRETS_LIST+=("GOOGLE_OAUTH_CLIENT_SECRET=google-oauth-client-secret:latest")
-          fi
-          SECRETS_CSV=$(IFS=,; echo "${SECRETS_LIST[*]}")
-
+          # Build comma-separated env vars (non-sensitive only).
+          # The Google OAuth client ID and client secret are technically
+          # public (they live in compiled desktop app code), so passing
+          # them as plain env vars is acceptable for a single-tenant demo.
           ENV_LIST=()
           if [ -n "${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}" ]; then
             ENV_LIST+=("GOOGLE_OAUTH_CLIENT_ID=${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}")
+          fi
+          if [ -n "${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}" ]; then
+            ENV_LIST+=("GOOGLE_OAUTH_CLIENT_SECRET=${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}")
           fi
           if [ -n "${{ vars.VF_DRIVE_ID }}" ]; then
             ENV_LIST+=("VF_DRIVE_ID=${{ vars.VF_DRIVE_ID }}")
@@ -91,7 +88,6 @@ jobs:
           else
             ENV_CSV=""
           fi
-          echo "==> secrets: $SECRETS_CSV"
           echo "==> env vars: $ENV_CSV"
 
           gcloud run deploy "${{ env.SERVICE }}" \
@@ -99,7 +95,7 @@ jobs:
             --region "${{ env.REGION }}" \
             --platform managed \
             --service-account "${{ env.RUNTIME_SA }}" \
-            --update-secrets "$SECRETS_CSV" \
+            --update-secrets "GOOGLE_APPLICATION_CREDENTIALS=${{ env.SECRET_NAME }}:latest" \
             ${ENV_CSV:+--set-env-vars "$ENV_CSV"} \
             --allow-unauthenticated \
             --memory 512Mi \
