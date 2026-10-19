@@ -143,11 +143,14 @@ table.comps .comp-self:hover { background: #b0b8e0; }
   font-family: ui-monospace, monospace;
 }
 .gen-download { margin-top: 12px; }
+.gen-drive   { margin-top: 8px; }
 .dl-link {
   display: inline-block; padding: 6px 12px; background: var(--ok-bg);
   color: var(--ok-fg); border-radius: 3px; font-weight: 700; font-size: 12px;
 }
 .dl-link:hover { background: #c8e6c9; text-decoration: none; }
+.dl-link-drive { background: #e8f0fe; color: #1a73e8; margin-right: 8px; }
+.dl-link-drive:hover { background: #d2e3fc; }
 .hidden { display: none; }
 
 /* --- footer ------------------------------------------------------------ */

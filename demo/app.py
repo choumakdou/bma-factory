@@ -299,6 +299,20 @@ def generate(case_id: str) -> JSONResponse:
         {"filename": a.filename, "size": a.size, "sha256": a.sha256, "type": a.type}
         for a in result.artifacts
     ]
+
+    # Drive push — best effort, the local download link is the fallback
+    drive_meta: dict | None = None
+    drive_error: str | None = None
+    if artifacts:
+        try:
+            from demo.drive import ensure_drive_layout, upload_to_outputs
+            ensure_drive_layout()
+            local_path = Path(result.artifacts[0].path)
+            drive_meta = upload_to_outputs(local_path)
+        except Exception as e:
+            drive_error = f"{type(e).__name__}: {e}"
+            log.warning("Drive upload failed: %s", drive_error)
+
     return JSONResponse({
         "ok":         True,
         "case_id":    case_id,
@@ -307,7 +321,22 @@ def generate(case_id: str) -> JSONResponse:
         "warnings":   result.warnings,
         "artifacts":  artifacts,
         "download":   f"/download/{artifacts[0]['filename']}" if artifacts else None,
+        "drive":      drive_meta,
+        "drive_error": drive_error,
     })
+
+
+@app.on_event("startup")
+async def _on_startup() -> None:
+    """Create the Drive folder layout on first boot (idempotent, best effort)."""
+    try:
+        from demo.drive import ensure_drive_layout
+        layout = ensure_drive_layout()
+        log.info("Drive layout ready: %s", layout)
+    except Exception as e:
+        # Don't crash the container if Drive is unavailable; the /generate
+        # endpoint will surface the error.
+        log.warning("Drive layout not created on startup: %s", e)
 
 
 @app.get("/download/{filename}")

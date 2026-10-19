@@ -115,6 +115,7 @@
       <button id="gen-btn" class="gen-btn" data-case-id="{{ case.id }}">Generate Comps + T&amp;R workbook</button>
       <pre id="gen-result" class="gen-result hidden"></pre>
       <div id="gen-download" class="gen-download hidden"></div>
+      <div id="gen-drive" class="gen-drive hidden"></div>
     </section>
 
     <section class="card">
@@ -138,6 +139,7 @@
     const btn = document.getElementById("gen-btn");
     const out = document.getElementById("gen-result");
     const dl  = document.getElementById("gen-download");
+    const dv  = document.getElementById("gen-drive");
     if (!btn) return;
     const caseId = btn.dataset.caseId || "bel-air-m2";
     btn.addEventListener("click", async () => {
@@ -151,6 +153,14 @@
         if (j.download) {
           dl.classList.remove("hidden");
           dl.innerHTML = '<a class="dl-link" href="' + j.download + '">⬇ Download ' + j.artifacts[0].filename + ' (' + j.artifacts[0].size.toLocaleString() + ' bytes)</a>';
+        }
+        if (j.drive) {
+          dv.classList.remove("hidden");
+          dv.innerHTML = '<a class="dl-link dl-link-drive" href="' + j.drive.webViewLink + '" target="_blank" rel="noopener">↗ Open in Google Drive</a> '
+            + '<span class="muted small">saved to /Outputs/</span>';
+        } else if (j.drive_error) {
+          dv.classList.remove("hidden");
+          dv.innerHTML = '<span class="muted small">⚠ Drive push failed: ' + j.drive_error + '</span>';
         }
       } catch (e) {
         out.textContent = "Error: " + e;
