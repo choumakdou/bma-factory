@@ -45,13 +45,20 @@ jobs:
       - name: Configure Docker for gcr.io
         run: gcloud auth configure-docker gcr.io --quiet
 
-      - name: Build container image
+      - name: Build container image with Docker
+        # Bypass Cloud Build (and its auto-created bucket) by building on the
+        # runner and pushing directly to gcr.io. The deployer SA only needs
+        # Storage Object Admin on the gcr.io bucket, which we already have.
         run: |
-          echo "==> Building ${{ env.IMAGE }}"
-          gcloud builds submit \
+          echo "==> Building ${{ env.IMAGE }} via Docker"
+          docker build \
             --tag "${{ env.IMAGE }}" \
-            --project "${{ env.PROJECT }}" \
-            --quiet
+            --tag "${{ env.IMAGE }}:sha-${{ github.sha }}" \
+            --label "org.opencontainers.image.revision=${{ github.sha }}" \
+            --label "org.opencontainers.image.source=${{ github.repository }}" \
+            .
+          echo "==> Pushing to gcr.io"
+          docker push "${{ env.IMAGE }}"
 
       - name: Deploy to Cloud Run
         run: |
