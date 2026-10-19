@@ -96,7 +96,8 @@ jobs:
             --platform managed \
             --service-account "${{ env.RUNTIME_SA }}" \
             --update-secrets "GOOGLE_APPLICATION_CREDENTIALS=${{ env.SECRET_NAME }}:latest" \
-            ${ENV_CSV:+--update-env-vars "$ENV_CSV"} \
+            --remove-env-vars "GOOGLE_OAUTH_CLIENT_ID,GOOGLE_OAUTH_CLIENT_SECRET,VF_DRIVE_ID" \
+            ${ENV_CSV:+--set-env-vars "$ENV_CSV"} \
             --allow-unauthenticated \
             --memory 512Mi \
             --cpu 1 \
