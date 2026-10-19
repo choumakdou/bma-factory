@@ -103,23 +103,34 @@ def _ranked() -> list[dict[str, Any]]:
 
 
 def _comps_for_module(ranked: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Translate the ranked comps into the shape the hk-rental-comps module wants."""
+    """Translate the ranked comps into the shape the hk-rental-comps module wants.
+
+    The module's typed validator is strict about field names AND the rent
+    format (a string like "HK$220,000", not a number). Without these
+    matches the validator refuses the whole payload.
+    """
     out: list[dict[str, Any]] = []
     for r in ranked:
         if r["is_self"]:
             continue
-        # The module's "comps" entries use simple dict fields. We feed it
-        # the 11 ranked comps, with the adjustments left as 0% — the valuer
-        # adjusts in the workbook, not at the ranking layer.
+        monthly_rent = r["psf_net"] * r["nfa_sqft"] / 12.0
+        rent_str = f"HK${monthly_rent:,.0f}"
         out.append({
-            "address":       r["address"],
-            "year":          int(r["inst_date"][:4]) if r["inst_date"] else 2025,
-            "date":          r["inst_date"],
-            "rent":          r["psf_net"] * r["nfa_sqft"] / 12.0,  # impute monthly rent = $/sf × NFA
-            "sa":            round(r["nfa_sqft"] / 10.76391, 1),  # NFA in sqm
-            "floor":         r["floor"],
-            "usage":         "OFC",
-            "price_index":   320.1,            # RVD private-domestic Apr 2026 (placeholder)
+            "address":          r["address"],
+            "year":             int(r["inst_date"][:4]) if r["inst_date"] else 2025,
+            "transaction_date": r["inst_date"],
+            "rent":             rent_str,
+            "sa":               round(r["nfa_sqft"] / 10.76391, 1),
+            "floor":            r["floor"],
+            "aspect":           "—",
+            "price_index":      325.1,            # RVD Aug 2026 (placeholder)
+            "adj_floor":        "0%",
+            "adj_qa":           "0%",
+            "adj_sw":           "0%",
+            "adj_age":          "0%",
+            "adj_location":     "0%",
+            "remarks":          f"Rank #{r['rank']} by relevancy; score {r['score']:.3f}. "
+                               + (f"QC: {', '.join(r['qc_flags'])}" if r['qc_flags'] else "No QC flags."),
         })
     return out
 
@@ -175,15 +186,15 @@ def generate() -> JSONResponse:
         "subject_address":    f"{SUBJECT['building']}, {SUBJECT['address']}",
         "subject_sa":         round(SUBJECT["nfa_sqft"] / 10.76391, 1),
         "subject_ac_platform": 0.0,
-        "subject_ac_pct":     0.0,
+        "subject_ac_pct":     "0%",
         "subject_price_index": 325.1,                # RVD Aug 2026 (placeholder)
         "val_date":           SUBJECT["valuation_date"],
         "valuer":             SUBJECT["valuer"],
         "comps":              _comps_for_module(ranked),
         "adopted_unit_rate":  SUBJECT["adopted_rate_psf_n"] * 10.76391,  # $/sqm
         "term_years":         3,
-        "term_yield_pct":     4.4,
-        "reversion_yield_pct": 4.9,
+        "term_rate":          "4.4%",
+        "reversion_rate":     "4.9%",
     }
     out_dir = Path("/tmp/bma-factory-demo/output")
     out_dir.mkdir(parents=True, exist_ok=True)
