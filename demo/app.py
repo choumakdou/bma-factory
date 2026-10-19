@@ -1,19 +1,18 @@
-"""bma-factory demo — Bel-Air M2 (ORO 120) case review.
+"""bma-factory demo — case library + per-case review.
 
-Single-page demo that proves the architecture end-to-end:
-  - Reads the (embedded) case data
-  - Runs the existing relevancy ranking from `ingest.relevance`
-  - Renders a case review with case header, ranked comps, QC flags, and a
-    Generate button
-  - On Generate, calls `app.core.generate.generate()` to produce the
-    HK Rental Comps + T&R workbook, then offers it as a download
+Routes:
+  GET  /                          — case library (categories + cards)
+  GET  /case/<case_id>            — per-case review (ranked comps + Generate)
+  GET  /api/cases                 — JSON list of all cases
+  GET  /api/cases/<case_id>       — JSON view of one case
+  POST /generate/<case_id>        — run the engine for one case
+  GET  /download/<filename>      — serve a generated workbook
+  GET  /diag                      — smoke test (always returns JSON)
+  GET  /healthz                   — liveness
 
-For the demo MVP the case data is embedded in `case_data.py` — extracted
-from the CHFT Map ver 8.0 Sheet1. v0.2 swaps this for real ORO-workbook
-parsing via `ingest.oro_ingest.parse_case` reading from the user's Drive.
-
-No auth. The URL is shared by link. The service account that runs the
-container has access only to Drive folders the user explicitly shares.
+For the demo MVP the case data is embedded in `case_data.py` (Bel-Air M2
+only). v0.2 swaps the loader to read ORO workbooks from the user's
+Drive `/ORO/` folder.
 """
 
 from __future__ import annotations
@@ -21,7 +20,7 @@ from __future__ import annotations
 import io
 import sys
 import logging
-import zipfile
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -34,21 +33,26 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from demo.case_data import SUBJECT, COMPS, comp_pool
+from demo.cases import Case, CaseData, CASES, get_case, get_cases_by_category
 from ingest.relevance import Weights, rank, Scored, is_self as is_self_txn
 
 log = logging.getLogger("bma-factory.demo")
 
-app = FastAPI(title="bma-factory demo", version="0.1.0")
+app = FastAPI(title="bma-factory demo", version="0.2.0")
 templates = Jinja2Templates(directory=str(_REPO / "demo" / "templates"))
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Per-case load + rank
 # ---------------------------------------------------------------------------
 
+def _load_case(case: Case) -> CaseData:
+    if case.data_loader is None:
+        raise HTTPException(status_code=501, detail=f"case '{case.id}' has no data loader yet")
+    return case.data_loader()
+
+
 def _score_breakdown(s: Scored) -> dict[str, float]:
-    """Lift the per-axis score from a Scored so the template can show it."""
     bd = s.breakdown
     return {
         "same_building":   round(bd.get("same_building", 0.0), 3),
@@ -59,56 +63,46 @@ def _score_breakdown(s: Scored) -> dict[str, float]:
     }
 
 
-def _ranked() -> list[dict[str, Any]]:
-    """Run the existing relevancy ranker on the embedded comp pool.
-
-    Subject is the Bel-Air M2 case. We use the valuer's building name
-    (ISLAND PLACE TOWER / Island Place Tower) as same-building match.
-    """
+def _ranked_for(case_data: CaseData, as_of: str) -> list[dict[str, Any]]:
     subject = {
-        "name": SUBJECT["building"],
-        "building": SUBJECT["building"],
-        "address": SUBJECT["address"],
-        "nfa_sqft": SUBJECT["nfa_sqft"],
-        "area_sf": SUBJECT["nfa_sqft"],
-        "usage": SUBJECT["usage"],
-        "case_ref": SUBJECT["case_ref"],
+        "name":     case_data.subject.get("building", ""),
+        "building": case_data.subject.get("building", ""),
+        "address":  case_data.subject.get("address", ""),
+        "nfa_sqft": case_data.subject.get("nfa_sqft", 0),
+        "area_sf":  case_data.subject.get("nfa_sqft", 0),
+        "usage":    case_data.subject.get("usage", ""),
+        "case_ref": case_data.subject.get("case_ref", ""),
     }
-    pool = comp_pool()
-    w = Weights()  # defaults: same_building 0.30, distance 0.25, recency 0.20, area 0.15, usage 0.10
-    ranked = rank(subject, pool, as_of=SUBJECT["valuation_date"], w=w)
+    pool = case_data.comps
+    w = Weights()
+    ranked = rank(subject, pool, as_of=as_of, w=w)
     out: list[dict[str, Any]] = []
     for s in ranked:
         c = s.comp
         hit, why = is_self_txn(subject, c)
         out.append({
-            "rank":          len(out) + 1,
-            "src_row":       c.get("src_row"),
-            "name":          c.get("name"),
-            "address":       c.get("address"),
-            "floor":         c.get("floor"),
-            "unit":          c.get("unit"),
-            "nfa_sqft":      c.get("nfa_sqft"),
-            "psf_net":       c.get("psf_net"),
-            "inst_date":     str(c.get("inst_date") or ""),
-            "nat_inst":      c.get("nat_inst"),
-            "grade":         c.get("grade"),
-            "qc_flags":      c.get("qc_flags") or [],
-            "score":         round(s.total, 3),
-            "breakdown":     _score_breakdown(s),
-            "is_self":       hit,
-            "self_reason":   why,
+            "rank":         len(out) + 1,
+            "src_row":      c.get("src_row"),
+            "name":         c.get("name"),
+            "address":      c.get("address"),
+            "floor":        c.get("floor"),
+            "unit":         c.get("unit"),
+            "nfa_sqft":     c.get("nfa_sqft"),
+            "psf_net":      c.get("psf_net"),
+            "inst_date":    str(c.get("inst_date") or c.get("date") or ""),
+            "nat_inst":     c.get("nat_inst"),
+            "grade":        c.get("grade"),
+            "qc_flags":     c.get("qc_flags") or [],
+            "score":        round(s.total, 3),
+            "breakdown":    _score_breakdown(s),
+            "is_self":      hit,
+            "self_reason":  why,
         })
     return out
 
 
 def _comps_for_module(ranked: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Translate the ranked comps into the shape the hk-rental-comps module wants.
-
-    The module's typed validator is strict about field names AND the rent
-    format (a string like "HK$220,000", not a number). Without these
-    matches the validator refuses the whole payload.
-    """
+    """Translate the ranked comps into the shape the hk-rental-comps module wants."""
     out: list[dict[str, Any]] = []
     for r in ranked:
         if r["is_self"]:
@@ -123,7 +117,7 @@ def _comps_for_module(ranked: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "sa":               round(r["nfa_sqft"] / 10.76391, 1),
             "floor":            r["floor"],
             "aspect":           "—",
-            "price_index":      325.1,            # RVD Aug 2026 (placeholder)
+            "price_index":      325.1,
             "adj_floor":        "0%",
             "adj_qa":           "0%",
             "adj_sw":           "0%",
@@ -139,118 +133,37 @@ def _comps_for_module(ranked: list[dict[str, Any]]) -> list[dict[str, Any]]:
 # Routes
 # ---------------------------------------------------------------------------
 
-@app.get("/", include_in_schema=False)
-def root() -> RedirectResponse:
-    return RedirectResponse(url="/case/bel-air-m2", status_code=302)
+@app.get("/", response_class=HTMLResponse)
+def index(request: Request) -> HTMLResponse:
+    """Case library — categories with cards, empty-state placeholders."""
+    grouped = get_cases_by_category()
+    total = sum(len(cs) for _, cs in grouped)
+    return templates.TemplateResponse(
+        request,
+        "index.html",
+        {
+            "grouped":   grouped,
+            "total":     total,
+            "active":    "library",
+        },
+    )
 
 
-@app.get("/healthz", include_in_schema=False)
-def healthz() -> dict[str, str]:
-    return {"status": "ok"}
-
-
-@app.get("/diag", include_in_schema=False)
-def diag() -> JSONResponse:
-    """Smoke-test the full generate path and return every diagnostic.
-
-    Returns JSON, not 500, even on failure. Useful for: (a) figuring out
-    which field of the values dict is wrong without redeploying, and
-    (b) confirming the live container can talk to the engine, the
-    module registry, and the file system.
-    """
-    import sys
-    import traceback
-    diag: dict[str, Any] = {
-        "ok": True,
-        "python": sys.version.split()[0],
-        "subject_loaded": bool(SUBJECT),
-        "comps_total": len(COMPS),
-    }
-    # 1. Module can be loaded
-    try:
-        from app.core.registry import get_module
-        loaded = get_module("hk-rental-comps")
-        diag["module_id"] = loaded.manifest.id
-        diag["module_name"] = loaded.manifest.name
-        diag["module_version"] = loaded.manifest.version
-    except Exception as e:
-        diag["ok"] = False
-        diag["module_load_error"] = f"{type(e).__name__}: {e}"
-        diag["traceback"] = traceback.format_exc().splitlines()[-10:]
-        return JSONResponse(diag, status_code=200)
-
-    # 2. Ranker runs
-    try:
-        ranked = _ranked()
-        diag["ranked_count"] = len(ranked)
-        diag["top_score"] = ranked[0]["score"] if ranked else None
-    except Exception as e:
-        diag["ok"] = False
-        diag["rank_error"] = f"{type(e).__name__}: {e}"
-        diag["traceback"] = traceback.format_exc().splitlines()[-10:]
-        return JSONResponse(diag, status_code=200)
-
-    # 3. Validator passes
-    try:
-        from app.core.schemas import validate as schema_validate
-        values = {
-            "subject_address":    f"{SUBJECT['building']}, {SUBJECT['address']}",
-            "subject_sa":         round(SUBJECT["nfa_sqft"] / 10.76391, 1),
-            "subject_ac_platform": 0.0,
-            "subject_ac_pct":     "0%",
-            "subject_price_index": 325.1,
-            "val_date":           SUBJECT["valuation_date"],
-            "valuer":             SUBJECT["valuer"],
-            "comps":              _comps_for_module(ranked),
-            "adopted_unit_rate":  SUBJECT["adopted_rate_psf_n"] * 10.76391,
-            "term_years":         3,
-            "term_rate":          "4.4%",
-            "reversion_rate":     "4.9%",
-        }
-        vr = schema_validate(loaded.manifest.schema(), values)
-        diag["validator_ok"] = vr.ok
-        diag["validator_errors"] = [
-            {"field": i.field, "message": i.message}
-            for i in vr.errors
-        ]
-        diag["validator_warnings"] = [
-            {"field": i.field, "message": i.message}
-            for i in vr.warnings
-        ]
-        if not vr.ok:
-            diag["ok"] = False
-            return JSONResponse(diag, status_code=200)
-    except Exception as e:
-        diag["ok"] = False
-        diag["validate_error"] = f"{type(e).__name__}: {e}"
-        diag["traceback"] = traceback.format_exc().splitlines()[-10:]
-        return JSONResponse(diag, status_code=200)
-
-    # 4. Filesystem writable
-    try:
-        out_dir = Path("/tmp/bma-factory-demo/output")
-        out_dir.mkdir(parents=True, exist_ok=True)
-        test_file = out_dir / ".diag-test"
-        test_file.write_text("ok")
-        test_file.unlink()
-        diag["fs_writable"] = True
-    except Exception as e:
-        diag["ok"] = False
-        diag["fs_error"] = f"{type(e).__name__}: {e}"
-        return JSONResponse(diag, status_code=200)
-
-    return JSONResponse(diag, status_code=200)
-
-
-@app.get("/case/bel-air-m2", response_class=HTMLResponse)
-def case_review(request: Request) -> HTMLResponse:
-    ranked = _ranked()
+@app.get("/case/{case_id}", response_class=HTMLResponse)
+def case_review(request: Request, case_id: str) -> HTMLResponse:
+    """Per-case review — ranked comps, QC flags, Generate button."""
+    case = get_case(case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail=f"case '{case_id}' not found")
+    case_data = _load_case(case)
+    ranked = _ranked_for(case_data, as_of=case.valuation_date)
     return templates.TemplateResponse(
         request,
         "case_review.html",
         {
-            "subject": SUBJECT,
-            "ranked": ranked,
+            "case":        case,
+            "subject":     case_data.subject,
+            "ranked":      ranked,
             "comps_total": len(ranked),
             "qc_counts": {
                 "PRESS":     sum(1 for r in ranked if "PRESS"     in r["qc_flags"]),
@@ -262,42 +175,86 @@ def case_review(request: Request) -> HTMLResponse:
     )
 
 
-@app.post("/generate")
-def generate() -> JSONResponse:
-    """Run the engine to produce the HK Rental Comps + T&R workbook.
+@app.get("/api/cases", include_in_schema=False)
+def api_cases() -> dict[str, Any]:
+    """JSON list of all cases (for the map / MCP / future UI bits)."""
+    return {
+        "total":  len(CASES),
+        "cases":  [
+            {
+                "id":               c.id,
+                "title":            c.title,
+                "category":         c.category,
+                "case_ref":         c.case_ref,
+                "client":           c.client,
+                "address":          c.address,
+                "district":         c.district,
+                "valuation_date":   c.valuation_date,
+                "adopted_value_hkd": c.adopted_value_hkd,
+                "nfa_sqft":         c.nfa_sqft,
+                "usage":            c.usage,
+                "summary":          c.summary,
+                "url":              f"/case/{c.id}",
+            }
+            for c in CASES
+        ],
+    }
 
-    Returns the path to the generated file (relative) so the UI can show
-    a download link. For the demo MVP the file is created on the local
-    container filesystem at /tmp/bma-factory-demo/output/. v0.2 writes
-    the file to the user's Drive `/Outputs/` folder.
+
+@app.get("/api/cases/{case_id}", include_in_schema=False)
+def api_case(case_id: str) -> dict[str, Any]:
+    case = get_case(case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail=f"case '{case_id}' not found")
+    case_data = _load_case(case)
+    ranked = _ranked_for(case_data, as_of=case.valuation_date)
+    return {
+        "case":     case,
+        "subject":  case_data.subject,
+        "ranked":   ranked,
+        "qc_counts": {
+            "PRESS":     sum(1 for r in ranked if "PRESS"     in r["qc_flags"]),
+            "CONNECTED": sum(1 for r in ranked if "CONNECTED" in r["qc_flags"]),
+            "APPROX":    sum(1 for r in ranked if "APPROX"    in r["qc_flags"]),
+            "NO_GFA":    sum(1 for r in ranked if "NO_GFA"    in r["qc_flags"]),
+        },
+    }
+
+
+@app.post("/generate/{case_id}")
+def generate(case_id: str) -> JSONResponse:
+    """Run the engine for a given case. Returns the artifact + download link.
 
     On any failure the full traceback is returned as JSON so the UI can
     show it (this is a demo — production would log + return 500 only).
     """
-    import traceback
     from app.core.generate import generate as engine_generate
-    from app.core.schemas import validate as schema_validate, Severity
+    from app.core.schemas import validate as schema_validate
     from app.core.registry import get_module
 
-    ranked = _ranked()
+    case = get_case(case_id)
+    if case is None:
+        return JSONResponse({"ok": False, "stage": "lookup", "error": f"case '{case_id}' not found"}, status_code=200)
+    case_data = _load_case(case)
+    ranked = _ranked_for(case_data, as_of=case.valuation_date)
+
+    subject = case_data.subject
     values: dict[str, Any] = {
-        "subject_address":    f"{SUBJECT['building']}, {SUBJECT['address']}",
-        "subject_sa":         round(SUBJECT["nfa_sqft"] / 10.76391, 1),
+        "subject_address":    f"{subject.get('building', '')}, {subject.get('address', '')}",
+        "subject_sa":         round(subject.get("nfa_sqft", 0) / 10.76391, 1),
         "subject_ac_platform": 0.0,
         "subject_ac_pct":     "0%",
-        "subject_price_index": 325.1,                # RVD Aug 2026 (placeholder)
-        "val_date":           SUBJECT["valuation_date"],
-        "valuer":             SUBJECT["valuer"],
+        "subject_price_index": 325.1,
+        "val_date":           case.valuation_date,
+        "valuer":             subject.get("valuer", "BMA"),
         "comps":              _comps_for_module(ranked),
-        "adopted_unit_rate":  SUBJECT["adopted_rate_psf_n"] * 10.76391,  # $/sqm
+        "adopted_unit_rate":  case.adopted_rate_psf_n * 10.76391,
         "term_years":         3,
         "term_rate":          "4.4%",
         "reversion_rate":     "4.9%",
     }
 
-    # Pre-flight: run the typed validator and surface any errors BEFORE
-    # the engine is even called. That way the page can show "field X is
-    # not a valid Y" without a 500.
+    # Pre-flight: surface validation errors as JSON before the engine
     try:
         loaded = get_module("hk-rental-comps")
         vr = schema_validate(loaded.manifest.schema(), values)
@@ -322,7 +279,6 @@ def generate() -> JSONResponse:
             "traceback": traceback.format_exc().splitlines()[-15:],
         }, status_code=200)
 
-    # Now call the engine
     out_dir = Path("/tmp/bma-factory-demo/output")
     out_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -346,6 +302,7 @@ def generate() -> JSONResponse:
     ]
     return JSONResponse({
         "ok":         True,
+        "case_id":    case_id,
         "run_id":     result.run_id,
         "input_hash": result.input_hash,
         "warnings":   result.warnings,
@@ -366,17 +323,64 @@ def download(filename: str):
     )
 
 
-@app.get("/api/case/bel-air-m2", include_in_schema=False)
-def api_case() -> dict[str, Any]:
-    """JSON view of the case (for the map view, MCP, etc.)."""
-    ranked = _ranked()
-    return {
-        "subject": SUBJECT,
-        "ranked":  ranked,
-        "qc_counts": {
-            "PRESS":     sum(1 for r in ranked if "PRESS"     in r["qc_flags"]),
-            "CONNECTED": sum(1 for r in ranked if "CONNECTED" in r["qc_flags"]),
-            "APPROX":    sum(1 for r in ranked if "APPROX"    in r["qc_flags"]),
-            "NO_GFA":    sum(1 for r in ranked if "NO_GFA"    in r["qc_flags"]),
-        },
+# Backwards compat: POST /generate with no case_id uses bel-air-m2
+@app.post("/generate", include_in_schema=False)
+def generate_legacy() -> RedirectResponse:
+    return RedirectResponse(url="/generate/bel-air-m2", status_code=307)
+
+
+@app.get("/healthz", include_in_schema=False)
+def healthz() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.get("/diag", include_in_schema=False)
+def diag() -> JSONResponse:
+    """Smoke-test everything and return every diagnostic as JSON."""
+    import sys
+    diag: dict[str, Any] = {
+        "ok": True,
+        "python": sys.version.split()[0],
+        "cases_total": len(CASES),
+        "case_ids": [c.id for c in CASES],
     }
+    try:
+        from app.core.registry import get_module
+        loaded = get_module("hk-rental-comps")
+        diag["module_id"] = loaded.manifest.id
+        diag["module_version"] = loaded.manifest.version
+    except Exception as e:
+        diag["ok"] = False
+        diag["module_load_error"] = f"{type(e).__name__}: {e}"
+        diag["traceback"] = traceback.format_exc().splitlines()[-10:]
+        return JSONResponse(diag, status_code=200)
+
+    try:
+        case = get_case("bel-air-m2")
+        if case is None:
+            diag["ok"] = False
+            diag["case_lookup"] = "missing"
+            return JSONResponse(diag, status_code=200)
+        case_data = _load_case(case)
+        ranked = _ranked_for(case_data, as_of=case.valuation_date)
+        diag["ranked_count"] = len(ranked)
+        diag["top_score"] = ranked[0]["score"] if ranked else None
+    except Exception as e:
+        diag["ok"] = False
+        diag["rank_error"] = f"{type(e).__name__}: {e}"
+        diag["traceback"] = traceback.format_exc().splitlines()[-10:]
+        return JSONResponse(diag, status_code=200)
+
+    try:
+        out_dir = Path("/tmp/bma-factory-demo/output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        test_file = out_dir / ".diag-test"
+        test_file.write_text("ok")
+        test_file.unlink()
+        diag["fs_writable"] = True
+    except Exception as e:
+        diag["ok"] = False
+        diag["fs_error"] = f"{type(e).__name__}: {e}"
+        return JSONResponse(diag, status_code=200)
+
+    return JSONResponse(diag, status_code=200)

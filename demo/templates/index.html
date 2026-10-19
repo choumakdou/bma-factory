@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>bma-factory · case library</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="case-head">
+    <div class="case-head-left">
+      <div class="case-ref-row">
+        <span class="case-ref">bma-factory</span>
+        <span class="case-ref-sep">·</span>
+        <span class="case-purpose">Valuation case library</span>
+      </div>
+      <h1>Cases</h1>
+      <div class="case-addr">A demo of the engine, the ranking, and the QC flags wired end-to-end</div>
+      <div class="case-meta">
+        <span class="meta-pill">{{ total }} case{{ '' if total == 1 else 's' }} total</span>
+        <span class="meta-pill">{{ grouped|length }} categories</span>
+        <span class="meta-pill"><a href="/api/cases" style="color: inherit;">JSON</a></span>
+      </div>
+    </div>
+  </header>
+
+  <main class="case-main">
+    {% for category, cases in grouped %}
+    <section class="card">
+      <h2>
+        {{ category }}
+        <span class="muted small" style="font-weight: 400; margin-left: 6px;">({{ cases|length }})</span>
+      </h2>
+
+      {% if cases %}
+        <div class="case-grid">
+          {% for c in cases %}
+          <a class="case-card" href="/case/{{ c.id }}">
+            <div class="case-card-head">
+              <div class="case-card-title">{{ c.title }}</div>
+              <div class="case-card-ref">{{ c.case_ref }}</div>
+            </div>
+            <div class="case-card-addr">{{ c.address }} · {{ c.district }}</div>
+            <div class="case-card-meta">
+              <div class="case-card-row">
+                <span class="case-card-label">Valued</span>
+                <span class="case-card-value">{{ c.valuation_date }}</span>
+              </div>
+              <div class="case-card-row">
+                <span class="case-card-label">Adopted</span>
+                <span class="case-card-value">HK${{ "{:,.0f}".format(c.adopted_value_hkd) }}</span>
+              </div>
+              <div class="case-card-row">
+                <span class="case-card-label">Area</span>
+                <span class="case-card-value">{{ "{:,.0f}".format(c.nfa_sqft) }} sf N</span>
+              </div>
+            </div>
+            <div class="case-card-summary muted">{{ c.summary }}</div>
+            <div class="case-card-foot">
+              <span class="muted small">Source: {{ c.source }}</span>
+              <span class="case-card-arrow">Open case →</span>
+            </div>
+          </a>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="case-empty">
+          <span class="muted">No cases in this category yet.</span>
+          <span class="muted small">Drop the working file in <code>/ORO/</code> + register a loader in <code>demo/cases.py</code> to land the first one.</span>
+        </div>
+      {% endif %}
+    </section>
+    {% endfor %}
+  </main>
+
+  <footer class="foot muted small">
+    bma-factory demo · project <code>bma-factory</code> · service <code>bma-factory-demo</code> · region <code>asia-east2</code>
+  </footer>
+</body>
+</html>

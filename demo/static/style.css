@@ -158,3 +158,77 @@ table.comps .comp-self:hover { background: #b0b8e0; }
 
 .card ul { margin: 8px 0 0 20px; }
 .card li { margin-bottom: 4px; line-height: 1.6; }
+
+/* --- library (index page) ---------------------------------------------- */
+
+.case-back {
+  color: rgba(255, 255, 255, 0.85);
+  text-decoration: none;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+}
+.case-back:hover { background: rgba(255, 255, 255, 0.18); text-decoration: none; }
+
+.case-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.case-card {
+  display: block;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--brand);
+  border-radius: 4px;
+  padding: 12px 14px;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color .15s, transform .15s, box-shadow .15s;
+}
+.case-card:hover {
+  border-color: var(--brand);
+  border-left-color: var(--brand);
+  text-decoration: none;
+  color: inherit;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(26, 35, 126, 0.08);
+}
+
+.case-card-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  margin-bottom: 4px;
+}
+.case-card-title { font-size: 14px; font-weight: 700; color: var(--brand-2); }
+.case-card-ref { font-size: 11px; color: var(--muted); font-family: ui-monospace, monospace; }
+.case-card-addr { font-size: 12px; color: var(--ink-2); margin-bottom: 8px; }
+.case-card-meta {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 6px 8px; background: var(--line-2); border-radius: 3px;
+  margin-bottom: 8px;
+}
+.case-card-row {
+  display: flex; justify-content: space-between; font-size: 12px;
+}
+.case-card-label { color: var(--muted); }
+.case-card-value { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.case-card-summary { font-size: 12px; line-height: 1.5; margin-bottom: 8px; }
+.case-card-foot {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 11px;
+  border-top: 1px dashed var(--line);
+  padding-top: 6px;
+}
+.case-card-arrow { color: var(--brand); font-weight: 700; }
+
+.case-empty {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 20px;
+  background: var(--line-2);
+  border-radius: 3px;
+  border: 1px dashed var(--line);
+  text-align: center;
+}

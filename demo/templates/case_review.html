@@ -10,13 +10,15 @@
   <header class="case-head">
     <div class="case-head-left">
       <div class="case-ref-row">
-        <span class="case-ref">{{ subject.case_id }}</span>
+        <a class="case-back" href="/">← Library</a>
         <span class="case-ref-sep">·</span>
-        <span class="case-valref">{{ subject.case_ref }}</span>
+        <span class="case-ref">{{ case.case_id_short or case.id }}</span>
         <span class="case-ref-sep">·</span>
-        <span class="case-purpose">{{ subject.purpose }}</span>
+        <span class="case-valref">{{ case.case_ref }}</span>
+        <span class="case-ref-sep">·</span>
+        <span class="case-purpose">{{ case.category }}</span>
       </div>
-      <h1>{{ subject.building }}</h1>
+      <h1>{{ case.title }}</h1>
       <div class="case-addr">{{ subject.address }} · {{ subject.district }} · Lot {{ subject.lot }}</div>
       <div class="case-meta">
         <span class="meta-pill">Valued {{ subject.valuation_date }}</span>
@@ -29,7 +31,9 @@
         <div class="adopted-label">Adopted value</div>
         <div class="adopted-figure">HK${{ "{:,.0f}".format(subject.adopted_value_hkd) }}</div>
         <div class="adopted-rate">≈ HK${{ "{:,.0f}".format(subject.adopted_rate_psf_n) }}/sf N · {{ "{:,.0f}".format(subject.nfa_sqft) }} sf N</div>
+        {% if subject.previous_value_hkd %}
         <div class="adopted-prev">Previous: HK${{ "{:,.0f}".format(subject.previous_value_hkd) }} ({{ subject.previous_date }})</div>
+        {% endif %}
       </div>
     </div>
   </header>
@@ -108,7 +112,7 @@
     <section class="card">
       <h2>Generate workbook</h2>
       <p>Click to run the engine. Produces the <strong>HK Rental Comps + Term &amp; Reversion</strong> workbook (live formulas, CHFT colour convention). For the demo the file is written to the container's local filesystem; v0.2 pushes to your Drive <code>/Outputs/</code> folder.</p>
-      <button id="gen-btn" class="gen-btn">Generate Comps + T&amp;R workbook</button>
+      <button id="gen-btn" class="gen-btn" data-case-id="{{ case.id }}">Generate Comps + T&amp;R workbook</button>
       <pre id="gen-result" class="gen-result hidden"></pre>
       <div id="gen-download" class="gen-download hidden"></div>
     </section>
@@ -135,12 +139,13 @@
     const out = document.getElementById("gen-result");
     const dl  = document.getElementById("gen-download");
     if (!btn) return;
+    const caseId = btn.dataset.caseId || "bel-air-m2";
     btn.addEventListener("click", async () => {
       btn.disabled = true; btn.textContent = "Generating…";
       out.classList.remove("hidden");
       out.textContent = "Running engine…";
       try {
-        const r = await fetch("/generate", { method: "POST" });
+        const r = await fetch("/generate/" + caseId, { method: "POST" });
         const j = await r.json();
         out.textContent = JSON.stringify(j, null, 2);
         if (j.download) {
