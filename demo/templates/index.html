@@ -3,78 +3,153 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>bma-factory · case library</title>
+  <title>BMA Factory · work console</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <header class="case-head">
-    <div class="case-head-left">
-      <div class="case-ref-row">
-        <span class="case-ref">bma-factory</span>
-        <span class="case-ref-sep">·</span>
-        <span class="case-purpose">Valuation case library</span>
+  <header class="console-head">
+    <div class="console-head-left">
+      <div class="console-brand">
+        <span class="console-brand-mark">⚙</span>
+        <span class="console-brand-text">BMA Factory</span>
+        <span class="console-brand-tag">work console</span>
       </div>
-      <h1>Cases</h1>
-      <div class="case-addr">A demo of the engine, the ranking, and the QC flags wired end-to-end</div>
-      <div class="case-meta">
-        <span class="meta-pill">{{ total }} case{{ '' if total == 1 else 's' }} total</span>
-        <span class="meta-pill">{{ grouped|length }} categories</span>
-        <span class="meta-pill"><a href="/api/cases" style="color: inherit;">JSON</a></span>
+      <h1>Good day, Bobby.</h1>
+      <div class="console-sub">
+        {% set active = active_cases|length %}
+        {% set history = history_cases|length %}
+        {% if active == 0 and history == 0 %}
+          Nothing on your desk yet. Add a case to get started.
+        {% elif active == 0 %}
+          {{ history }} case{{ '' if history == 1 else 's' }} in history · no active work right now.
+        {% else %}
+          {{ active }} case{{ '' if active == 1 else 's' }} on your desk
+          {% if history %} · {{ history }} in history{% endif %}.
+        {% endif %}
       </div>
+    </div>
+    <div class="console-head-right">
+      <a class="head-btn head-btn-secondary" href="/api/cases" target="_blank">JSON</a>
+      <a class="head-btn head-btn-primary" href="/diag">Smoke test</a>
     </div>
   </header>
 
-  <main class="case-main">
-    {% for category, cases in grouped %}
-    <section class="card">
-      <h2>
-        {{ category }}
-        <span class="muted small" style="font-weight: 400; margin-left: 6px;">({{ cases|length }})</span>
-      </h2>
+  <main class="console-main">
 
-      {% if cases %}
-        <div class="case-grid">
-          {% for c in cases %}
-          <a class="case-card" href="/case/{{ c.id }}">
-            <div class="case-card-head">
-              <div class="case-card-title">{{ c.title }}</div>
-              <div class="case-card-ref">{{ c.case_ref }}</div>
+    <!-- Quick actions -->
+    <section class="console-section">
+      <h2 class="console-section-title">Quick actions</h2>
+      <div class="quick-grid">
+        <a class="quick-card" href="{% if active_cases %}/case/{{ active_cases[0].id }}{% else %}#{% endif %}">
+          <div class="quick-icon">📂</div>
+          <div class="quick-title">Open active case</div>
+          <div class="quick-sub muted">
+            {% if active_cases %}{{ active_cases[0].title }}{% else %}No active case{% endif %}
+          </div>
+        </a>
+        <a class="quick-card" href="{% if active_cases %}/case/{{ active_cases[0].id }}#generate{% else %}#{% endif %}">
+          <div class="quick-icon">⚡</div>
+          <div class="quick-title">Generate workbook</div>
+          <div class="quick-sub muted">Comps + T&amp;R, one click</div>
+        </a>
+        <a class="quick-card" href="#">
+          <div class="quick-icon">🔍</div>
+          <div class="quick-title">QC check</div>
+          <div class="quick-sub muted">Standing rules + flags · v0.2</div>
+        </a>
+        <a class="quick-card" href="#">
+          <div class="quick-icon">📈</div>
+          <div class="quick-title">RVD index</div>
+          <div class="quick-sub muted">Latest monthly index · v0.2</div>
+        </a>
+      </div>
+    </section>
+
+    <!-- Active work -->
+    <section class="console-section">
+      <div class="console-section-head">
+        <h2 class="console-section-title">On your desk</h2>
+        <span class="muted small">{{ active_cases|length }} active</span>
+      </div>
+
+      {% if active_cases %}
+        <div class="active-grid">
+          {% for c in active_cases %}
+          <a class="active-card" href="/case/{{ c.id }}">
+            <div class="active-card-left">
+              <div class="active-card-ref">{{ c.case_id_short or c.case_ref }}</div>
+              <div class="active-card-title">{{ c.title }}</div>
+              <div class="active-card-addr">{{ c.address }} · {{ c.district }}</div>
+              <div class="active-card-meta muted small">
+                Valued {{ c.valuation_date }} · {{ c.client }}
+              </div>
+              {% if c.last_action %}
+              <div class="active-card-action muted small">↳ {{ c.last_action }}</div>
+              {% endif %}
             </div>
-            <div class="case-card-addr">{{ c.address }} · {{ c.district }}</div>
-            <div class="case-card-meta">
-              <div class="case-card-row">
-                <span class="case-card-label">Valued</span>
-                <span class="case-card-value">{{ c.valuation_date }}</span>
+            <div class="active-card-right">
+              <div class="active-card-value">HK${{ "{:,.0f}".format(c.adopted_value_hkd) }}</div>
+              <div class="active-card-rate muted small">
+                {{ c.usage }} · {{ "{:,.0f}".format(c.nfa_sqft) }} sf N
               </div>
-              <div class="case-card-row">
-                <span class="case-card-label">Adopted</span>
-                <span class="case-card-value">HK${{ "{:,.0f}".format(c.adopted_value_hkd) }}</span>
-              </div>
-              <div class="case-card-row">
-                <span class="case-card-label">Area</span>
-                <span class="case-card-value">{{ "{:,.0f}".format(c.nfa_sqft) }} sf N</span>
-              </div>
-            </div>
-            <div class="case-card-summary muted">{{ c.summary }}</div>
-            <div class="case-card-foot">
-              <span class="muted small">Source: {{ c.source }}</span>
-              <span class="case-card-arrow">Open case →</span>
+              <div class="active-card-arrow">Open →</div>
             </div>
           </a>
           {% endfor %}
         </div>
       {% else %}
-        <div class="case-empty">
-          <span class="muted">No cases in this category yet.</span>
-          <span class="muted small">Drop the working file in <code>/ORO/</code> + register a loader in <code>demo/cases.py</code> to land the first one.</span>
+        <div class="console-empty">
+          <span class="muted">No active cases.</span>
+          <span class="muted small">Add one in <code>demo/cases.py</code> to get started.</span>
         </div>
       {% endif %}
     </section>
-    {% endfor %}
+
+    <!-- History -->
+    <section class="console-section">
+      <div class="console-section-head">
+        <h2 class="console-section-title">History</h2>
+        <span class="muted small">{{ history_cases|length }} completed</span>
+      </div>
+
+      {% if history_cases %}
+        <table class="history-table">
+          <thead>
+            <tr>
+              <th>Case</th>
+              <th>Address</th>
+              <th>Valued</th>
+              <th class="num">Adopted</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for c in history_cases %}
+            <tr>
+              <td>
+                <div class="history-ref">{{ c.case_id_short or c.case_ref }}</div>
+                <div class="muted small">{{ c.category }}</div>
+              </td>
+              <td>{{ c.address }} · {{ c.district }}</td>
+              <td>{{ c.valuation_date }}</td>
+              <td class="num">HK${{ "{:,.0f}".format(c.adopted_value_hkd) }}</td>
+              <td><a class="muted small" href="/case/{{ c.id }}">Open →</a></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <div class="console-empty">
+          <span class="muted">No completed cases yet.</span>
+          <span class="muted small">Mark a case's status as <code>completed</code> in <code>demo/cases.py</code> when it's filed.</span>
+        </div>
+      {% endif %}
+    </section>
+
   </main>
 
   <footer class="foot muted small">
-    bma-factory demo · project <code>bma-factory</code> · service <code>bma-factory-demo</code> · region <code>asia-east2</code>
+    BMA Factory · project <code>bma-factory</code> · service <code>bma-factory-demo</code> · region <code>asia-east2</code>
   </footer>
 </body>
 </html>

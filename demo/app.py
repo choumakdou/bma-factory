@@ -33,7 +33,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from demo.cases import Case, CaseData, CASES, get_case, get_cases_by_category
+from demo.cases import Case, CaseData, CASES, get_case, get_cases_by_category, get_active_cases, get_history_cases
 from ingest.relevance import Weights, rank, Scored, is_self as is_self_txn
 
 log = logging.getLogger("bma-factory.demo")
@@ -135,16 +135,15 @@ def _comps_for_module(ranked: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
-    """Case library — categories with cards, empty-state placeholders."""
-    grouped = get_cases_by_category()
-    total = sum(len(cs) for _, cs in grouped)
+    """BMA Factory work console — dashboard for daily valuation work."""
+    active_cases  = get_active_cases()
+    history_cases = get_history_cases()
     return templates.TemplateResponse(
         request,
         "index.html",
         {
-            "grouped":   grouped,
-            "total":     total,
-            "active":    "library",
+            "active_cases":  active_cases,
+            "history_cases": history_cases,
         },
     )
 

@@ -63,6 +63,8 @@ class Case:
     adopted_rate_psf_n: int = 0         # HK$/sf N — for the adopted-rate pill
     previous_value_hkd: Optional[int] = None
     previous_date: Optional[str] = None
+    status: str = "active"             # "active" | "completed" | "archived"
+    last_action: str = ""              # free-form, e.g. "Generated workbook 2026-10-13"
     data_loader: Optional[Callable[[], CaseData]] = None
 
 
@@ -98,6 +100,8 @@ CASES: list[Case] = [
         source="Embedded — extracted from CHFT Map ver 8.0 Sheet1",
         previous_value_hkd=73_500_000,
         previous_date="2025-09-15",
+        status="active",
+        last_action="Engine smoke-test passed · 4 QC flags raised",
         data_loader=_load_bel_air_m2,
     ),
 ]
@@ -109,6 +113,16 @@ def get_case(case_id: str) -> Optional[Case]:
         if c.id == case_id:
             return c
     return None
+
+
+def get_active_cases() -> list[Case]:
+    """Cases that are in progress or recently valued — the things on your desk."""
+    return [c for c in CASES if c.status in ("active", "in_progress")]
+
+
+def get_history_cases() -> list[Case]:
+    """Cases that are completed and kept for reference."""
+    return [c for c in CASES if c.status == "completed"]
 
 
 def get_cases_by_category() -> list[tuple[str, list[Case]]]:
