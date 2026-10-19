@@ -58,20 +58,47 @@ uvicorn demo.app:app --reload --port 8080
 
 ## Deploying to Cloud Run
 
-From Cloud Shell (or any laptop with `gcloud` authed):
+### Auto-deploy (recommended — no Cloud Shell needed)
+
+The repo has a GitHub Actions workflow at `.github/workflows/deploy.yml`
+that runs on every push to `master`. To enable it:
+
+1. **Create a deploy service account** in the GCP project:
+   - IAM & Admin → Service Accounts → **Create Service Account**
+   - Name: `bma-factory-deploy`
+   - Grant these four roles (one at a time, click "+ Add Another Role"):
+     - `Cloud Build Editor` (roles/cloudbuild.builds.editor)
+     - `Cloud Run Admin` (roles/run.admin)
+     - `Service Account User` (roles/iam.serviceAccountUser)
+     - `Storage Object Admin` (roles/storage.objectAdmin)
+   - Click **Done**
+2. **Download the JSON key:**
+   - Click the SA you just created → **Keys** tab → **Add Key** →
+     **Create new key** → **JSON** → **Create**
+   - A `.json` file downloads. **Don't email it, don't paste it in chat.**
+3. **Add it as a GitHub Actions secret:**
+   - Open https://github.com/choumakdou/bma-factory/settings/secrets/actions
+   - Click **New repository secret**
+   - **Name:** `GCP_SA_KEY` (exact)
+   - **Value:** paste the entire JSON contents
+   - Click **Add secret**
+
+That's it. From now on, every push to `master` auto-builds + auto-deploys.
+The Actions tab at https://github.com/choumakdou/bma-factory/actions shows
+each deploy in real time, and the run URL appears in the workflow's output.
+
+You can also **manually trigger** a deploy without pushing: Actions tab →
+"deploy" → **Run workflow** → green button.
+
+### Manual deploy (fallback)
+
+If the workflow is broken or you want to deploy from Cloud Shell:
 
 ```bash
 git clone https://github.com/choumakdou/bma-factory
 cd bma-factory
 bash deploy.sh
 ```
-
-The script:
-1. Builds the container via Cloud Build
-2. Deploys to Cloud Run in `asia-east2`
-3. Mounts the `engine-sa-key` secret as `GOOGLE_APPLICATION_CREDENTIALS`
-4. Runs as the `service-ac1@bma-factory.iam.gserviceaccount.com` runtime SA
-5. Prints the URL
 
 ## What the engine does on first boot
 

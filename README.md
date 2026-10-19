@@ -21,9 +21,20 @@ uvicorn demo.app:app --port 8080         # → http://localhost:8080/case/bel-ai
 
 ## Deploy to Cloud Run
 
+**Auto-deploy (recommended):** every push to `master` triggers GitHub Actions,
+which builds the container and deploys to Cloud Run. No shell, no manual
+step. Requires the `GCP_SA_KEY` secret to be set in the repo's Actions
+settings — see `demo/README.md` for the one-time setup.
+
+**Manual deploy:** from Cloud Shell, after `git clone`:
+
 ```bash
 bash deploy.sh
 ```
+
+The script does the same thing as the workflow — build with Cloud Build,
+deploy to Cloud Run in `asia-east2`, mount the `engine-sa-key` secret
+as `GOOGLE_APPLICATION_CREDENTIALS`.
 
 ## Status
 
