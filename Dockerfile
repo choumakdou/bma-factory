@@ -1,22 +1,26 @@
-FROM python:3.11-slim
-
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    VF_DB=/data/ledger.sqlite3 \
-    VF_OUTPUT_DIR=/data/outputs
+FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+# Install system deps for openpyxl/python-docx (none for slim, but keep slim)
+# No build-essential needed — all packages are pure-python wheels.
+
+# Install Python deps first (cache layer)
+COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app ./app
-COPY modules ./modules
+# Copy the engine + demo
+COPY app/        ./app/
+COPY ingest/     ./ingest/
+COPY modules/    ./modules/
+COPY demo/       ./demo/
 
-# Cloud Run mounts the writable filesystem; keep everything under /data
-RUN mkdir -p /data/outputs
-
+# The container's working dir is /app; the engine imports "app.*", "ingest.*", "modules.*"
 ENV PYTHONPATH=/app
+# Cloud Run sets $PORT (defaults 8080)
+ENV PORT=8080
 
 EXPOSE 8080
-CMD ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8080"]
+
+# Run the demo FastAPI app. For production, swap in the full API router.
+CMD ["uvicorn", "demo.app:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1", "--log-level", "info"]

@@ -1,5 +1,36 @@
-.venv/
+# Python
 __pycache__/
-*.pyc
-data/
+*.py[cod]
+*.egg-info/
+*.so
+.Python
+
+# Build / venv
+.venv/
+venv/
+build/
+dist/
+
+# Editor
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Test / coverage
 .pytest_cache/
+.coverage
+htmlcov/
+
+# Engine outputs (per-run)
+data/outputs/
+data/runs/
+/tmp/bma-factory-demo/
+
+# Local secrets — never commit
+*.json
+!modules/*/manifest.json
+!modules/*/sample-*.json
+.env
+.env.*
+secrets/

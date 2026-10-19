@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bel-Air M2 · ORO 120 · bma-factory demo</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="case-head">
+    <div class="case-head-left">
+      <div class="case-ref-row">
+        <span class="case-ref">{{ subject.case_id }}</span>
+        <span class="case-ref-sep">·</span>
+        <span class="case-valref">{{ subject.case_ref }}</span>
+        <span class="case-ref-sep">·</span>
+        <span class="case-purpose">{{ subject.purpose }}</span>
+      </div>
+      <h1>{{ subject.building }}</h1>
+      <div class="case-addr">{{ subject.address }} · {{ subject.district }} · Lot {{ subject.lot }}</div>
+      <div class="case-meta">
+        <span class="meta-pill">Valued {{ subject.valuation_date }}</span>
+        <span class="meta-pill">Valuer · {{ subject.valuer }}</span>
+        <span class="meta-pill">Purpose · {{ subject.purpose }}</span>
+      </div>
+    </div>
+    <div class="case-head-right">
+      <div class="adopted">
+        <div class="adopted-label">Adopted value</div>
+        <div class="adopted-figure">HK${{ "{:,.0f}".format(subject.adopted_value_hkd) }}</div>
+        <div class="adopted-rate">≈ HK${{ "{:,.0f}".format(subject.adopted_rate_psf_n) }}/sf N · {{ "{:,.0f}".format(subject.nfa_sqft) }} sf N</div>
+        <div class="adopted-prev">Previous: HK${{ "{:,.0f}".format(subject.previous_value_hkd) }} ({{ subject.previous_date }})</div>
+      </div>
+    </div>
+  </header>
+
+  <section class="qc-strip">
+    <div class="qc-pill qc-total"><b>{{ comps_total }}</b> comps ranked</div>
+    <div class="qc-pill qc-warn"><b>{{ qc_counts.PRESS }}</b> PRESS</div>
+    <div class="qc-pill qc-warn"><b>{{ qc_counts.CONNECTED }}</b> CONNECTED</div>
+    <div class="qc-pill qc-warn"><b>{{ qc_counts.APPROX }}</b> APPROX</div>
+    <div class="qc-pill qc-info"><b>{{ qc_counts.NO_GFA }}</b> NO_GFA</div>
+  </section>
+
+  <main class="case-main">
+    <section class="card">
+      <h2>Ranked comparables</h2>
+      <p class="muted">Per-axis scores: same-building, distance, recency, area-similarity, usage-match. Total is a weighted sum (defaults: 0.30, 0.25, 0.20, 0.15, 0.10). QC flags render as labels — the valuer never sees a comp hidden by an upstream filter.</p>
+      <table class="comps">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Address</th>
+            <th>Date</th>
+            <th>Floor / Unit</th>
+            <th class="num">NFA (sf)</th>
+            <th class="num">$/sf N</th>
+            <th>Grade</th>
+            <th class="num">Score</th>
+            <th>QC</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in ranked %}
+          <tr class="comp-row {% if r.is_self %}comp-self{% endif %}">
+            <td class="num">{{ r.rank }}</td>
+            <td>
+              <div class="comp-addr">{{ r.address }}</div>
+              <div class="comp-name muted">{{ r.name }}</div>
+            </td>
+            <td>{{ r.inst_date }}</td>
+            <td>
+              <div>{{ r.floor }}</div>
+              {% if r.unit %}<div class="muted small">Unit {{ r.unit }}</div>{% endif %}
+            </td>
+            <td class="num">{{ "{:,.0f}".format(r.nfa_sqft) }}</td>
+            <td class="num">${{ "{:,.0f}".format(r.psf_net) }}</td>
+            <td>{{ r.grade or "—" }}</td>
+            <td class="num score">
+              <div class="score-total">{{ "{:.2f}".format(r.score) }}</div>
+              <div class="score-bd muted small">
+                sb {{ "{:.2f}".format(r.breakdown.same_building) }} ·
+                di {{ "{:.2f}".format(r.breakdown.distance) }} ·
+                re {{ "{:.2f}".format(r.breakdown.recency) }} ·
+                ar {{ "{:.2f}".format(r.breakdown.area_similarity) }} ·
+                us {{ "{:.2f}".format(r.breakdown.usage_match) }}
+              </div>
+            </td>
+            <td>
+              {% for f in r.qc_flags %}<span class="flag flag-{{ f|lower }}">{{ f }}</span>{% endfor %}
+              {% if r.is_self %}<span class="flag flag-self">SELF</span>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>Map view</h2>
+      <p class="muted">The v8.0 contract is wired: <code>locations[]</code> would render here as a Leaflet map with QC flags as inline labels. For the demo MVP, the map is a placeholder — the data shape is in <code>demo/case_data.py</code> and the locations list is built in <code>demo/app.py::_ranked()</code>.</p>
+      <div class="map-placeholder">
+        <span>📍 Island Place Tower · 510 King's Road · 13,812 sf</span>
+        <span class="muted small">Map: v0.2 — same locations[] contract, Leaflet + Esri tiles, drag-to-relocate, flags as labels</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Generate workbook</h2>
+      <p>Click to run the engine. Produces the <strong>HK Rental Comps + Term &amp; Reversion</strong> workbook (live formulas, CHFT colour convention). For the demo the file is written to the container's local filesystem; v0.2 pushes to your Drive <code>/Outputs/</code> folder.</p>
+      <button id="gen-btn" class="gen-btn">Generate Comps + T&amp;R workbook</button>
+      <pre id="gen-result" class="gen-result hidden"></pre>
+      <div id="gen-download" class="gen-download hidden"></div>
+    </section>
+
+    <section class="card">
+      <h2>About this demo</h2>
+      <ul class="muted">
+        <li><b>Source:</b> 11 comparables extracted from <code>CHFT Map ver 8.0 20260921.xlsm</code> Sheet1 (the 12 selected transactions for Island Place Tower; row 13 is the subject marker).</li>
+        <li><b>Subject:</b> Bel-Air M2 / ORO 120 / V/ALE/303927/2026 — adopted value HK$76,000,000, valuation date 15 Sep 2026 (per ORO 120 review notes).</li>
+        <li><b>Engine:</b> this page is served by a FastAPI app that calls the existing <code>ingest.relevance.rank()</code> + <code>app.core.generate.generate()</code> paths. One engine, three doors (UI / REST / MCP, when added).</li>
+        <li><b>What's NOT in the demo:</b> auth (URL shared by link), property picker (one case), standing rules CRUD (read-only display), diff view, modification generalisation, other modules (PV / Office / Industrial), the EXE.</li>
+        <li><b>What's v0.2:</b> real ORO-workbook parsing via <code>ingest.oro_ingest.parse_case</code> reading from your Drive <code>/ORO/</code> folder; push to <code>/Outputs/</code>; standing rules UI; auth.</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer class="foot muted small">
+    bma-factory demo · project <code>bma-factory</code> · service <code>bma-factory-demo</code> · region <code>asia-east2</code>
+  </footer>
+
+  <script>
+  (function () {
+    const btn = document.getElementById("gen-btn");
+    const out = document.getElementById("gen-result");
+    const dl  = document.getElementById("gen-download");
+    if (!btn) return;
+    btn.addEventListener("click", async () => {
+      btn.disabled = true; btn.textContent = "Generating…";
+      out.classList.remove("hidden");
+      out.textContent = "Running engine…";
+      try {
+        const r = await fetch("/generate", { method: "POST" });
+        const j = await r.json();
+        out.textContent = JSON.stringify(j, null, 2);
+        if (j.download) {
+          dl.classList.remove("hidden");
+          dl.innerHTML = '<a class="dl-link" href="' + j.download + '">⬇ Download ' + j.artifacts[0].filename + ' (' + j.artifacts[0].size.toLocaleString() + ' bytes)</a>';
+        }
+      } catch (e) {
+        out.textContent = "Error: " + e;
+      } finally {
+        btn.disabled = false; btn.textContent = "Re-generate";
+      }
+    });
+  })();
+  </script>
+</body>
+</html>

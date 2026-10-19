@@ -1,0 +1,160 @@
+/* bma-factory demo — minimal, professional, no framework */
+
+:root {
+  --bg: #fafaf7;
+  --card: #ffffff;
+  --ink: #1a1a1a;
+  --ink-2: #555;
+  --muted: #888;
+  --line: #e6e6e0;
+  --line-2: #f0f0ea;
+  --brand: #1a237e;
+  --brand-2: #283593;
+  --accent: #c5cae9;
+  --warn-bg: #fff3e0;
+  --warn-fg: #b85a00;
+  --bad-bg: #ffe0e0;
+  --bad-fg: #a02020;
+  --ok-bg: #e8f5e9;
+  --ok-fg: #2e7d32;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, "PingFang HK", "Microsoft JhengHei", sans-serif; font-size: 14px; line-height: 1.5; }
+body { background: var(--bg); color: var(--ink); }
+
+a { color: var(--brand); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; background: var(--line-2); padding: 1px 5px; border-radius: 3px; }
+
+/* --- header ------------------------------------------------------------ */
+
+.case-head {
+  background: linear-gradient(180deg, var(--brand) 0%, var(--brand-2) 100%);
+  color: #fff;
+  padding: 18px 24px;
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 24px;
+  border-bottom: 3px solid var(--accent);
+}
+.case-head-left { flex: 1; }
+.case-head-right { flex: 0 0 auto; }
+
+.case-ref-row { font-size: 12px; opacity: 0.9; margin-bottom: 4px; }
+.case-ref { font-weight: 700; }
+.case-ref-sep { margin: 0 6px; opacity: 0.6; }
+.case-purpose { font-style: italic; }
+
+.case-head h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+.case-addr { font-size: 14px; opacity: 0.9; margin-bottom: 8px; }
+.case-meta { display: flex; gap: 6px; flex-wrap: wrap; }
+.meta-pill {
+  display: inline-block; font-size: 11px; padding: 2px 8px;
+  background: rgba(255,255,255,0.12); border-radius: 10px;
+}
+
+.adopted { text-align: right; min-width: 200px; }
+.adopted-label { font-size: 11px; opacity: 0.75; text-transform: uppercase; letter-spacing: 0.5px; }
+.adopted-figure { font-size: 22px; font-weight: 700; margin: 2px 0 4px; }
+.adopted-rate { font-size: 12px; opacity: 0.9; }
+.adopted-prev { font-size: 11px; opacity: 0.65; margin-top: 4px; }
+
+/* --- QC strip ---------------------------------------------------------- */
+
+.qc-strip {
+  background: #fff; border-bottom: 1px solid var(--line);
+  padding: 8px 24px; display: flex; gap: 8px; flex-wrap: wrap;
+}
+.qc-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12px; padding: 4px 10px; border-radius: 12px;
+  background: var(--line-2); color: var(--ink-2);
+}
+.qc-pill b { color: var(--ink); }
+.qc-pill.qc-warn { background: var(--warn-bg); color: var(--warn-fg); }
+.qc-pill.qc-warn b { color: var(--warn-fg); }
+.qc-pill.qc-info { background: var(--accent); color: var(--brand-2); }
+.qc-pill.qc-info b { color: var(--brand-2); }
+
+/* --- main / cards ------------------------------------------------------ */
+
+.case-main { max-width: 1200px; margin: 24px auto; padding: 0 24px; display: flex; flex-direction: column; gap: 18px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 18px 20px; }
+.card h2 { font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--brand-2); margin-bottom: 8px; }
+.muted { color: var(--ink-2); }
+.small { font-size: 11px; }
+
+/* --- comps table ------------------------------------------------------- */
+
+table.comps { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+table.comps th {
+  text-align: left; font-weight: 700; font-size: 11px; text-transform: uppercase;
+  color: var(--ink-2); padding: 6px 8px; border-bottom: 2px solid var(--brand);
+  background: var(--line-2);
+}
+table.comps td { padding: 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.comps tr:hover { background: var(--line-2); }
+table.comps .num { text-align: right; font-variant-numeric: tabular-nums; }
+table.comps .comp-self { background: var(--accent); }
+table.comps .comp-self:hover { background: #b0b8e0; }
+
+.comp-addr { font-weight: 600; }
+.comp-name { font-size: 11px; }
+
+.score-total { font-weight: 700; color: var(--brand-2); }
+.score-bd { margin-top: 2px; font-family: ui-monospace, monospace; font-size: 10px; line-height: 1.3; }
+
+.flag {
+  display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 6px;
+  border-radius: 3px; margin-right: 3px; margin-bottom: 2px;
+  text-transform: uppercase; letter-spacing: 0.3px;
+}
+.flag-press { background: var(--bad-bg); color: var(--bad-fg); }
+.flag-connected { background: #fff3e0; color: var(--warn-fg); }
+.flag-approx { background: var(--accent); color: var(--brand-2); }
+.flag-no_gfa { background: #f0f0f0; color: var(--ink-2); }
+.flag-self { background: #1a237e; color: #fff; }
+
+/* --- map placeholder --------------------------------------------------- */
+
+.map-placeholder {
+  background: linear-gradient(135deg, #e8eaf6 0%, #c5cae9 100%);
+  border: 1px dashed #9fa8da;
+  border-radius: 4px;
+  padding: 32px;
+  text-align: center;
+  display: flex; flex-direction: column; gap: 6px;
+  color: var(--brand-2);
+  font-size: 14px;
+}
+
+/* --- generate --------------------------------------------------------- */
+
+.gen-btn {
+  background: var(--brand); color: #fff; border: 0; padding: 8px 16px;
+  font-size: 13px; font-weight: 700; border-radius: 3px; cursor: pointer;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.gen-btn:hover { background: var(--brand-2); }
+.gen-btn:disabled { background: var(--muted); cursor: wait; }
+.gen-result {
+  margin-top: 12px; padding: 10px 12px; background: #1e1e1e; color: #d4d4d4;
+  border-radius: 3px; font-size: 11px; max-height: 320px; overflow: auto;
+  font-family: ui-monospace, monospace;
+}
+.gen-download { margin-top: 12px; }
+.dl-link {
+  display: inline-block; padding: 6px 12px; background: var(--ok-bg);
+  color: var(--ok-fg); border-radius: 3px; font-weight: 700; font-size: 12px;
+}
+.dl-link:hover { background: #c8e6c9; text-decoration: none; }
+.hidden { display: none; }
+
+/* --- footer ------------------------------------------------------------ */
+
+.foot { text-align: center; padding: 24px; color: var(--muted); }
+
+/* --- about list -------------------------------------------------------- */
+
+.card ul { margin: 8px 0 0 20px; }
+.card li { margin-bottom: 4px; line-height: 1.6; }
