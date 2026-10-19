@@ -69,37 +69,38 @@ jobs:
         run: |
           echo "==> Deploying ${{ env.SERVICE }} to ${{ env.REGION }}"
 
-          # Combine all --set-secrets into one flag (gcloud run only allows
-          # one of --set-secrets|--update-secrets at a time).
-          SECRET_FLAGS=(--update-secrets)
-          SECRET_FLAGS+=("GOOGLE_APPLICATION_CREDENTIALS=${{ env.SECRET_NAME }}:latest")
-          if [ -n "${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}" ]; then
-            SECRET_FLAGS+=("GOOGLE_OAUTH_CLIENT_SECRET=google-oauth-client-secret:latest")
-          fi
-          echo "==> secret flags: ${SECRET_FLAGS[*]}"
+          # gcloud run deploy --update-secrets and --set-env-vars both
+          # take comma-separated key=value pairs in a SINGLE argument.
+          # Building them as a list and joining with commas.
 
-          # Env vars that are safe to pass in plain text (client ID, drive ID)
-          ENV_FLAGS=()
+          SECRETS_LIST=("GOOGLE_APPLICATION_CREDENTIALS=${{ env.SECRET_NAME }}:latest")
+          if [ -n "${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}" ]; then
+            SECRETS_LIST+=("GOOGLE_OAUTH_CLIENT_SECRET=google-oauth-client-secret:latest")
+          fi
+          SECRETS_CSV=$(IFS=,; echo "${SECRETS_LIST[*]}")
+
+          ENV_LIST=()
           if [ -n "${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}" ]; then
-            ENV_FLAGS+=("GOOGLE_OAUTH_CLIENT_ID=${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}")
+            ENV_LIST+=("GOOGLE_OAUTH_CLIENT_ID=${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}")
           fi
           if [ -n "${{ vars.VF_DRIVE_ID }}" ]; then
-            ENV_FLAGS+=("VF_DRIVE_ID=${{ vars.VF_DRIVE_ID }}")
+            ENV_LIST+=("VF_DRIVE_ID=${{ vars.VF_DRIVE_ID }}")
           fi
-          if [ ${#ENV_FLAGS[@]} -gt 0 ]; then
-            ENV_FLAGS_STR=$(IFS=,; echo "${ENV_FLAGS[*]}")
+          if [ ${#ENV_LIST[@]} -gt 0 ]; then
+            ENV_CSV=$(IFS=,; echo "${ENV_LIST[*]}")
           else
-            ENV_FLAGS_STR=""
+            ENV_CSV=""
           fi
-          echo "==> env flags: ${ENV_FLAGS_STR}"
+          echo "==> secrets: $SECRETS_CSV"
+          echo "==> env vars: $ENV_CSV"
 
           gcloud run deploy "${{ env.SERVICE }}" \
             --image "${{ env.IMAGE }}" \
             --region "${{ env.REGION }}" \
             --platform managed \
             --service-account "${{ env.RUNTIME_SA }}" \
-            "${SECRET_FLAGS[@]}" \
-            ${ENV_FLAGS_STR:+--set-env-vars "$ENV_FLAGS_STR"} \
+            --update-secrets "$SECRETS_CSV" \
+            ${ENV_CSV:+--set-env-vars "$ENV_CSV"} \
             --allow-unauthenticated \
             --memory 512Mi \
             --cpu 1 \
