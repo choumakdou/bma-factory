@@ -35,16 +35,32 @@ _drive = None
 
 
 def _get_drive():
-    """Lazy auth — only when the first Drive call is made."""
+    """Lazy auth — only when the first Drive call is made.
+
+    Accepts GOOGLE_APPLICATION_CREDENTIALS in two forms:
+      1. A file path (the Google-recommended pattern)
+      2. The raw service-account JSON content (what Cloud Run's
+         --set-secrets flag actually gives you)
+
+    The two are disambiguated by checking whether the value starts
+    with ``{`` — JSON always does, a file path doesn't.
+    """
     global _drive
     if _drive is not None:
         return _drive
-    creds_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-    if not creds_path:
+    creds_data = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    if not creds_data:
         raise RuntimeError("GOOGLE_APPLICATION_CREDENTIALS not set in the container env")
-    if not Path(creds_path).exists():
-        raise RuntimeError(f"GOOGLE_APPLICATION_CREDENTIALS points to {creds_path} but the file is missing")
-    creds = service_account.Credentials.from_service_account_file(creds_path, scopes=SCOPES)
+    if creds_data.lstrip().startswith("{"):
+        # Raw JSON — Cloud Run's --set-secrets puts the value here
+        import json
+        info = json.loads(creds_data)
+        creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+    else:
+        # File path — the local-dev pattern
+        if not Path(creds_data).exists():
+            raise RuntimeError(f"GOOGLE_APPLICATION_CREDENTIALS points to {creds_data} but the file is missing")
+        creds = service_account.Credentials.from_service_account_file(creds_data, scopes=SCOPES)
     _drive = gbuild("drive", "v3", credentials=creds, cache_discovery=False)
     return _drive
 
