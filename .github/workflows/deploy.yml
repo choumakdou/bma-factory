@@ -90,13 +90,26 @@ jobs:
           fi
           echo "==> env vars: $ENV_CSV"
 
+          # Step 1: Clean up env vars from any previous failed deploy.
+          # Earlier failed runs may have set GOOGLE_OAUTH_CLIENT_SECRET as
+          # a Secret Manager reference, but we want it as a plain env var.
+          # gcloud won't let us change the type in one step, so we remove
+          # first, then re-add.
+          echo "==> Cleaning up any stale env-var types from previous deploys"
+          gcloud run services update "${{ env.SERVICE }}" \
+            --region "${{ env.REGION }}" \
+            --remove-env-vars "GOOGLE_OAUTH_CLIENT_ID,GOOGLE_OAUTH_CLIENT_SECRET,VF_DRIVE_ID" \
+            --remove-secrets "GOOGLE_OAUTH_CLIENT_SECRET" \
+            --project "${{ env.PROJECT }}" \
+            --quiet || echo "  (nothing to clean, first run or already clean)"
+
+          # Step 2: Deploy the new image with the desired env vars.
           gcloud run deploy "${{ env.SERVICE }}" \
             --image "${{ env.IMAGE }}" \
             --region "${{ env.REGION }}" \
             --platform managed \
             --service-account "${{ env.RUNTIME_SA }}" \
             --update-secrets "GOOGLE_APPLICATION_CREDENTIALS=${{ env.SECRET_NAME }}:latest" \
-            --remove-env-vars "GOOGLE_OAUTH_CLIENT_ID,GOOGLE_OAUTH_CLIENT_SECRET,VF_DRIVE_ID" \
             ${ENV_CSV:+--set-env-vars "$ENV_CSV"} \
             --allow-unauthenticated \
             --memory 512Mi \
