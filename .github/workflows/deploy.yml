@@ -25,6 +25,11 @@ env:
   RUNTIME_SA: service-ac1@bma-factory.iam.gserviceaccount.com
   SECRET_NAME: engine-sa-key
   IMAGE: gcr.io/bma-factory/bma-factory-demo
+  # The Shared Drive the engine writes to. Without this set, the engine
+  # falls back to the SA's Drive root — which fails on personal Google
+  # accounts with "Service Accounts do not have storage quota".
+  # Replace with the Shared Drive ID once Bobby creates one.
+  VF_DRIVE_ID: ${{ vars.VF_DRIVE_ID }}
 
 jobs:
   deploy:
@@ -63,12 +68,18 @@ jobs:
       - name: Deploy to Cloud Run
         run: |
           echo "==> Deploying ${{ env.SERVICE }} to ${{ env.REGION }}"
+          EXTRA_ENV=""
+          if [ -n "${{ env.VF_DRIVE_ID }}" ]; then
+            EXTRA_ENV="--set-env-vars VF_DRIVE_ID=${{ env.VF_DRIVE_ID }}"
+            echo "==> Setting VF_DRIVE_ID to ${{ env.VF_DRIVE_ID }}"
+          fi
           gcloud run deploy "${{ env.SERVICE }}" \
             --image "${{ env.IMAGE }}" \
             --region "${{ env.REGION }}" \
             --platform managed \
             --service-account "${{ env.RUNTIME_SA }}" \
             --set-secrets "GOOGLE_APPLICATION_CREDENTIALS=${{ env.SECRET_NAME }}:latest" \
+            $EXTRA_ENV \
             --allow-unauthenticated \
             --memory 512Mi \
             --cpu 1 \
