@@ -149,6 +149,99 @@ def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/diag", include_in_schema=False)
+def diag() -> JSONResponse:
+    """Smoke-test the full generate path and return every diagnostic.
+
+    Returns JSON, not 500, even on failure. Useful for: (a) figuring out
+    which field of the values dict is wrong without redeploying, and
+    (b) confirming the live container can talk to the engine, the
+    module registry, and the file system.
+    """
+    import sys
+    import traceback
+    diag: dict[str, Any] = {
+        "ok": True,
+        "python": sys.version.split()[0],
+        "subject_loaded": bool(SUBJECT),
+        "comps_total": len(COMPS),
+    }
+    # 1. Module can be loaded
+    try:
+        from app.core.registry import get_module
+        loaded = get_module("hk-rental-comps")
+        diag["module_id"] = loaded.manifest.id
+        diag["module_name"] = loaded.manifest.name
+        diag["module_version"] = loaded.manifest.version
+    except Exception as e:
+        diag["ok"] = False
+        diag["module_load_error"] = f"{type(e).__name__}: {e}"
+        diag["traceback"] = traceback.format_exc().splitlines()[-10:]
+        return JSONResponse(diag, status_code=200)
+
+    # 2. Ranker runs
+    try:
+        ranked = _ranked()
+        diag["ranked_count"] = len(ranked)
+        diag["top_score"] = ranked[0]["score"] if ranked else None
+    except Exception as e:
+        diag["ok"] = False
+        diag["rank_error"] = f"{type(e).__name__}: {e}"
+        diag["traceback"] = traceback.format_exc().splitlines()[-10:]
+        return JSONResponse(diag, status_code=200)
+
+    # 3. Validator passes
+    try:
+        from app.core.schemas import validate as schema_validate
+        values = {
+            "subject_address":    f"{SUBJECT['building']}, {SUBJECT['address']}",
+            "subject_sa":         round(SUBJECT["nfa_sqft"] / 10.76391, 1),
+            "subject_ac_platform": 0.0,
+            "subject_ac_pct":     "0%",
+            "subject_price_index": 325.1,
+            "val_date":           SUBJECT["valuation_date"],
+            "valuer":             SUBJECT["valuer"],
+            "comps":              _comps_for_module(ranked),
+            "adopted_unit_rate":  SUBJECT["adopted_rate_psf_n"] * 10.76391,
+            "term_years":         3,
+            "term_rate":          "4.4%",
+            "reversion_rate":     "4.9%",
+        }
+        vr = schema_validate(loaded.manifest.schema(), values)
+        diag["validator_ok"] = vr.ok
+        diag["validator_errors"] = [
+            {"field": i.field, "message": i.message}
+            for i in vr.errors
+        ]
+        diag["validator_warnings"] = [
+            {"field": i.field, "message": i.message}
+            for i in vr.warnings
+        ]
+        if not vr.ok:
+            diag["ok"] = False
+            return JSONResponse(diag, status_code=200)
+    except Exception as e:
+        diag["ok"] = False
+        diag["validate_error"] = f"{type(e).__name__}: {e}"
+        diag["traceback"] = traceback.format_exc().splitlines()[-10:]
+        return JSONResponse(diag, status_code=200)
+
+    # 4. Filesystem writable
+    try:
+        out_dir = Path("/tmp/bma-factory-demo/output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        test_file = out_dir / ".diag-test"
+        test_file.write_text("ok")
+        test_file.unlink()
+        diag["fs_writable"] = True
+    except Exception as e:
+        diag["ok"] = False
+        diag["fs_error"] = f"{type(e).__name__}: {e}"
+        return JSONResponse(diag, status_code=200)
+
+    return JSONResponse(diag, status_code=200)
+
+
 @app.get("/case/bel-air-m2", response_class=HTMLResponse)
 def case_review(request: Request) -> HTMLResponse:
     ranked = _ranked()
@@ -177,9 +270,14 @@ def generate() -> JSONResponse:
     a download link. For the demo MVP the file is created on the local
     container filesystem at /tmp/bma-factory-demo/output/. v0.2 writes
     the file to the user's Drive `/Outputs/` folder.
+
+    On any failure the full traceback is returned as JSON so the UI can
+    show it (this is a demo — production would log + return 500 only).
     """
+    import traceback
     from app.core.generate import generate as engine_generate
-    from datetime import date as _date
+    from app.core.schemas import validate as schema_validate, Severity
+    from app.core.registry import get_module
 
     ranked = _ranked()
     values: dict[str, Any] = {
@@ -196,19 +294,58 @@ def generate() -> JSONResponse:
         "term_rate":          "4.4%",
         "reversion_rate":     "4.9%",
     }
+
+    # Pre-flight: run the typed validator and surface any errors BEFORE
+    # the engine is even called. That way the page can show "field X is
+    # not a valid Y" without a 500.
+    try:
+        loaded = get_module("hk-rental-comps")
+        vr = schema_validate(loaded.manifest.schema(), values)
+        if not vr.ok:
+            return JSONResponse({
+                "ok": False,
+                "stage": "validate",
+                "errors": [
+                    {"field": i.field, "message": i.message, "severity": str(i.severity)}
+                    for i in vr.errors
+                ],
+                "warnings": [
+                    {"field": i.field, "message": i.message}
+                    for i in vr.warnings
+                ],
+            }, status_code=200)
+    except Exception as e:
+        return JSONResponse({
+            "ok": False,
+            "stage": "preflight",
+            "error": f"{type(e).__name__}: {e}",
+            "traceback": traceback.format_exc().splitlines()[-15:],
+        }, status_code=200)
+
+    # Now call the engine
     out_dir = Path("/tmp/bma-factory-demo/output")
     out_dir.mkdir(parents=True, exist_ok=True)
-    result = engine_generate(
-        module_id="hk-rental-comps",
-        payload=values,
-        caller="demo-ui",
-        out_dir=out_dir,
-    )
+    try:
+        result = engine_generate(
+            module_id="hk-rental-comps",
+            payload=values,
+            caller="demo-ui",
+            out_dir=out_dir,
+        )
+    except Exception as e:
+        return JSONResponse({
+            "ok": False,
+            "stage": "engine",
+            "error": f"{type(e).__name__}: {e}",
+            "traceback": traceback.format_exc().splitlines()[-25:],
+        }, status_code=200)
+
     artifacts = [
         {"filename": a.filename, "size": a.size, "sha256": a.sha256, "type": a.type}
         for a in result.artifacts
     ]
     return JSONResponse({
+        "ok":         True,
         "run_id":     result.run_id,
         "input_hash": result.input_hash,
         "warnings":   result.warnings,
