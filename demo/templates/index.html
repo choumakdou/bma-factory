@@ -34,6 +34,24 @@
     </div>
   </header>
 
+  {% if not auth.configured %}
+  <div class="console-banner console-banner-warn">
+    <span>⚙ <b>Google Drive not connected.</b> Set <code>GOOGLE_OAUTH_CLIENT_ID</code> and <code>GOOGLE_OAUTH_CLIENT_SECRET</code> in the container env to enable Save-to-Drive.</span>
+  </div>
+  {% elif not auth.signed_in %}
+  <div class="console-banner console-banner-info">
+    <span>📂 <b>Sign in to save to Drive.</b> Generated workbooks go to <code>/Outputs/</code> in your Google Drive.</span>
+    <a class="head-btn head-btn-primary" href="/auth/login">Sign in with Google</a>
+  </div>
+  {% else %}
+  <div class="console-banner console-banner-ok">
+    <span>✓ Signed in as <b>{{ auth.user.email }}</b> · workbooks save to <code>/Outputs/</code></span>
+    <form action="/auth/signout" method="post" style="display:inline">
+      <button class="head-btn head-btn-secondary" type="submit">Sign out</button>
+    </form>
+  </div>
+  {% endif %}
+
   <main class="console-main">
 
     <!-- Quick actions -->

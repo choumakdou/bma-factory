@@ -138,12 +138,22 @@ def index(request: Request) -> HTMLResponse:
     """BMA Factory work console — dashboard for daily valuation work."""
     active_cases  = get_active_cases()
     history_cases = get_history_cases()
+    auth = {"signed_in": False, "user": None, "configured": True}
+    try:
+        from demo.oauth import get_user_info, is_configured
+        auth["configured"] = is_configured()
+        if auth["configured"]:
+            auth["user"] = get_user_info()
+            auth["signed_in"] = auth["user"] is not None
+    except Exception:
+        pass
     return templates.TemplateResponse(
         request,
         "index.html",
         {
             "active_cases":  active_cases,
             "history_cases": history_cases,
+            "auth":          auth,
         },
     )
 
@@ -337,6 +347,67 @@ async def _on_startup() -> None:
         # Don't crash the container if Drive is unavailable; the /generate
         # endpoint will surface the error.
         log.warning("Drive layout not created on startup: %s", e)
+
+
+# ---------------------------------------------------------------------------
+# OAuth2 routes — the valuer signs in with their own Google account so the
+# engine can write to their personal Drive (uses their 15 GB quota, not a
+# service account's zero quota).
+# ---------------------------------------------------------------------------
+
+@app.get("/auth/login")
+def auth_login():
+    """Redirect to Google's consent screen."""
+    from demo.oauth import get_flow
+    try:
+        flow = get_flow()
+    except RuntimeError as e:
+        return JSONResponse(
+            {"ok": False, "error": str(e), "hint": "Set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET in the container env."},
+            status_code=503,
+        )
+    auth_url, _state = flow.authorization_url(
+        access_type="offline",          # request a refresh token
+        include_granted_scopes="true",
+        prompt="consent",               # force re-consent to get a fresh refresh token
+    )
+    return RedirectResponse(auth_url)
+
+
+@app.get("/auth/callback")
+def auth_callback(code: str = "", error: str = ""):
+    """Google redirects here with ?code=... after the user signs in."""
+    from demo.oauth import get_flow, save_credentials
+    if error:
+        return RedirectResponse(url=f"/?auth_error={error}", status_code=302)
+    if not code:
+        return RedirectResponse(url="/?auth_error=missing_code", status_code=302)
+    try:
+        flow = get_flow()
+        flow.fetch_token(code=code)
+        save_credentials(flow.credentials)
+    except Exception as e:
+        log.exception("OAuth callback failed")
+        return RedirectResponse(url=f"/?auth_error={type(e).__name__}", status_code=302)
+    return RedirectResponse(url="/?auth=ok", status_code=302)
+
+
+@app.get("/auth/status")
+def auth_status() -> dict[str, Any]:
+    from demo.oauth import get_user_info, is_configured
+    info = get_user_info()
+    return {
+        "oauth_configured": is_configured(),
+        "signed_in": info is not None,
+        "user": info,
+    }
+
+
+@app.post("/auth/signout")
+def auth_signout() -> dict[str, str]:
+    from demo.oauth import clear_credentials
+    clear_credentials()
+    return {"ok": "true"}
 
 
 @app.get("/download/{filename}")

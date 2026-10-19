@@ -371,3 +371,13 @@ body.console {
   padding: 20px; text-align: center;
   background: var(--line-2); border-radius: 3px; border: 1px dashed var(--line);
 }
+
+/* Auth banner */
+.console-banner {
+  max-width: 1200px; margin: 16px auto 0; padding: 10px 20px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  border-radius: 4px; font-size: 13px;
+}
+.console-banner-warn { background: var(--warn-bg); color: var(--warn-fg); border-left: 3px solid var(--warn-fg); }
+.console-banner-info { background: #e8f0fe; color: #1a73e8; border-left: 3px solid #1a73e8; }
+.console-banner-ok   { background: var(--ok-bg);   color: var(--ok-fg);   border-left: 3px solid var(--ok-fg); }

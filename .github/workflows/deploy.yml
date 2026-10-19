@@ -68,18 +68,30 @@ jobs:
       - name: Deploy to Cloud Run
         run: |
           echo "==> Deploying ${{ env.SERVICE }} to ${{ env.REGION }}"
-          EXTRA_ENV=""
-          if [ -n "${{ env.VF_DRIVE_ID }}" ]; then
-            EXTRA_ENV="--set-env-vars VF_DRIVE_ID=${{ env.VF_DRIVE_ID }}"
-            echo "==> Setting VF_DRIVE_ID to ${{ env.VF_DRIVE_ID }}"
+
+          # Build the list of env vars. We always pass the OAuth client ID
+          # and secret if the secrets are present in the repo. The engine
+          # works without them (auth is optional, just disables Save-to-Drive).
+          ENV_ARGS=()
+          if [ -n "${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}" ]; then
+            ENV_ARGS+=("--set-env-vars" "GOOGLE_OAUTH_CLIENT_ID=${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}")
           fi
+          if [ -n "${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}" ]; then
+            # The secret value comes through without being echoed in logs
+            ENV_ARGS+=("--update-secrets" "GOOGLE_OAUTH_CLIENT_SECRET=google-oauth-client-secret:latest")
+          fi
+          if [ -n "${{ vars.VF_DRIVE_ID }}" ]; then
+            ENV_ARGS+=("--set-env-vars" "VF_DRIVE_ID=${{ vars.VF_DRIVE_ID }}")
+          fi
+          echo "==> env-var flags: ${ENV_ARGS[*]}"
+
           gcloud run deploy "${{ env.SERVICE }}" \
             --image "${{ env.IMAGE }}" \
             --region "${{ env.REGION }}" \
             --platform managed \
             --service-account "${{ env.RUNTIME_SA }}" \
             --set-secrets "GOOGLE_APPLICATION_CREDENTIALS=${{ env.SECRET_NAME }}:latest" \
-            $EXTRA_ENV \
+            "${ENV_ARGS[@]}" \
             --allow-unauthenticated \
             --memory 512Mi \
             --cpu 1 \

@@ -7,4 +7,5 @@ python-pptx>=0.6
 google-api-python-client>=2.100
 google-auth>=2.27
 google-auth-httplib2>=0.2
+google-auth-oauthlib>=1.2          # OAuth2 web flow for valuer sign-in
 requests>=2.31

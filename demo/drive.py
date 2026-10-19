@@ -1,30 +1,31 @@
 """Google Drive client for the bma-factory demo.
 
-Authenticates as the runtime service account (the one whose JSON is
-mounted as GOOGLE_APPLICATION_CREDENTIALS by Cloud Run). Creates the
-``/ORO/``, ``/Outputs/``, ``/Templates/`` folder layout on first call,
-and pushes generated workbooks to ``/Outputs/``.
+Uses the valuer's own Google credentials (OAuth2) — generated workbooks
+land in their personal Google Drive, not a service account. This
+matches how every real valuer tool works (DocuSign, HelloSign, Dropbox).
 
-For the demo MVP, only the upload-to-Outputs path is used. Pulling from
-``/ORO/`` (for real ORO-workbook parsing) is v0.2.
+Single-user for the demo (Bobby). Token lives at
+``/tmp/bma-factory-demo/tokens/user.json`` and is rotated on every
+successful sign-in.
+
+The service account (``service-ac1@bma-factory.iam...``) is still
+mounted as ``GOOGLE_APPLICATION_CREDENTIALS`` because the container
+needs *some* identity to boot — but it's only used for the runtime, not
+for Drive.
 """
 
 from __future__ import annotations
 
 import logging
-import os
 import threading
 from pathlib import Path
 from typing import Any
 
-from google.oauth2 import service_account
-from googleapiclient.discovery import build as gbuild
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
 log = logging.getLogger("bma-factory.drive")
 
-SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 FOLDER_MIME = "application/vnd.google-apps.folder"
 
@@ -35,50 +36,30 @@ _drive = None
 
 
 def _get_drive():
-    """Lazy auth — only when the first Drive call is made.
+    """Lazy auth — uses Bobby's OAuth credentials, not a service account.
 
-    Accepts GOOGLE_APPLICATION_CREDENTIALS in two forms:
-      1. A file path (the Google-recommended pattern)
-      2. The raw service-account JSON content (what Cloud Run's
-         --set-secrets flag actually gives you)
-
-    The two are disambiguated by checking whether the value starts
-    with ``{`` — JSON always does, a file path doesn't.
+    The service-account path was removed because personal Google
+    accounts don't allow SA writes (quota error). The OAuth path uses
+    the valuer's own 15 GB quota via the ``drive.file`` scope.
     """
     global _drive
     if _drive is not None:
         return _drive
-    creds_data = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-    if not creds_data:
-        raise RuntimeError("GOOGLE_APPLICATION_CREDENTIALS not set in the container env")
-    if creds_data.lstrip().startswith("{"):
-        # Raw JSON — Cloud Run's --set-secrets puts the value here
-        import json
-        info = json.loads(creds_data)
-        creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
-    else:
-        # File path — the local-dev pattern
-        if not Path(creds_data).exists():
-            raise RuntimeError(f"GOOGLE_APPLICATION_CREDENTIALS points to {creds_data} but the file is missing")
-        creds = service_account.Credentials.from_service_account_file(creds_data, scopes=SCOPES)
-    _drive = gbuild("drive", "v3", credentials=creds, cache_discovery=False)
+    from demo.oauth import get_drive as _oauth_drive
+    _drive = _oauth_drive()
     return _drive
 
 
 def _shared_drive_id() -> str | None:
     """The Shared Drive to use as the root, from the env. None → use the
-    SA's own Drive (which doesn't have storage quota on personal Google
-    accounts, so this only works in Workspace or with Shared Drives).
+    user's own Drive (the OAuth default for personal Google accounts).
     """
+    import os
     return os.environ.get("VF_DRIVE_ID") or None
 
 
 def _find_or_create_folder(name: str, parent_id: str | None = None) -> str:
-    """Find a folder by name (under parent, if given), create if missing.
-
-    When a Shared Drive ID is set (``VF_DRIVE_ID``), the folder is found
-    or created inside that drive; ``parent_id`` is ignored.
-    """
+    """Find a folder by name (under parent, if given), create if missing."""
     drive_id = _shared_drive_id()
     with _lock:
         if name in _folder_ids:
@@ -116,15 +97,7 @@ def _find_or_create_folder(name: str, parent_id: str | None = None) -> str:
 
 
 def ensure_drive_layout() -> dict[str, str]:
-    """Create the three demo folders, idempotently.
-
-    Returns a dict of ``{name: folder_id}`` for ``ORO``, ``Outputs``,
-    ``Templates``. If ``VF_DRIVE_ID`` is set, the folders go inside
-    that Shared Drive; otherwise at the SA's Drive root (which only
-    works in Workspace).
-
-    Safe to call on every container boot.
-    """
+    """Create the three demo folders, idempotently. Returns ``{name: id}``."""
     return {
         "ORO":       _find_or_create_folder("ORO"),
         "Outputs":   _find_or_create_folder("Outputs"),
@@ -133,15 +106,10 @@ def ensure_drive_layout() -> dict[str, str]:
 
 
 def upload_to_outputs(local_path: Path, mime: str = MIME_XLSX) -> dict[str, Any]:
-    """Upload a local file to the ``/Outputs/`` folder.
+    """Upload a local file to the user's ``/Outputs/`` folder.
 
-    Returns the Drive file metadata (``id``, ``name``, ``webViewLink``).
-    Each call creates a NEW file (no overwrite) — the file name is the
-    workbook's own filename which already includes case + date.
-
-    When ``VF_DRIVE_ID`` is set, the upload goes to the Shared Drive's
-    ``/Outputs/`` folder. Otherwise it uses the SA's Drive root, which
-    fails with a quota error on personal Google accounts.
+    Uses the OAuth credentials (the valuer's own Drive), so the upload
+    counts against the valuer's personal quota.
     """
     drive = _get_drive()
     folder_id = _find_or_create_folder("Outputs")
