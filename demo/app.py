@@ -442,6 +442,125 @@ def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
+# ---------------------------------------------------------------------------
+# Public pages required by the Google OAuth consent screen. The Branding page
+# wants a home page, a privacy policy URL and a terms of service URL. Serving
+# them from the app itself keeps the whole thing on one hostname and costs
+# nothing.
+# ---------------------------------------------------------------------------
+
+_LEGAL_CSS = """
+body{font:15px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+     color:#1f2328;background:#f6f7f9;margin:0;padding:40px 20px}
+.wrap{max-width:720px;margin:0 auto;background:#fff;border:1px solid #e3e5e8;
+      border-radius:6px;padding:32px 36px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:28px 0 8px}
+.meta{color:#656d76;font-size:13px;margin:0 0 24px}
+li{margin:6px 0}code{background:#f0f1f3;padding:1px 5px;border-radius:3px;font-size:13px}
+"""
+
+
+def _legal_page(title: str, updated: str, body_html: str) -> HTMLResponse:
+    return HTMLResponse(
+        f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title} · BMA Factory</title><style>{_LEGAL_CSS}</style></head>
+<body><div class="wrap"><h1>{title}</h1>
+<p class="meta">BMA Factory · last updated {updated}</p>
+{body_html}
+</div></body></html>"""
+    )
+
+
+@app.get("/privacy", include_in_schema=False)
+def privacy() -> HTMLResponse:
+    return _legal_page(
+        "Privacy Policy",
+        "20 October 2026",
+        """
+<p>BMA Factory is an internal tool operated by CHFT Valuation Advisory. It is
+used by a single authorised valuer to prepare property valuation workpapers.</p>
+
+<h2>What the app stores</h2>
+<ul>
+<li><b>Google authentication tokens</b> — an access token and a refresh token,
+    written to the container's local filesystem so the app can write generated
+    workbooks to Google Drive on the valuer's behalf. These are discarded when
+    the container is redeployed or when you click <b>Sign out</b>.</li>
+<li><b>Case data you upload</b> — property comparables, valuation parameters
+    and generated workbooks, which are written to your own Google Drive.</li>
+<li><b>An idempotency ledger</b> — a local record of generation runs, used to
+    guarantee the same inputs always produce the same output file.</li>
+</ul>
+
+<h2>What the app does NOT do</h2>
+<ul>
+<li>It does not read files in your Drive that it did not create. The
+    <code>drive.file</code> permission grants access only to files this app
+    creates or that you explicitly open with it.</li>
+<li>It does not sell, share or transmit your data to any third party.</li>
+<li>It does not send your data to any AI or analytics service.</li>
+</ul>
+
+<h2>Third-party services</h2>
+<p>The app connects to Google APIs (Drive, OAuth) and to public data sources
+such as the Rating and Valuation Department and Centaline, to retrieve market
+statistics and floor plan imagery for valuation reference.</p>
+
+<h2>Data retention</h2>
+<p>You can revoke the app's access at any time from your
+<a href="https://myaccount.google.com/permissions">Google Account permissions</a>
+page. Revoking access stops the app writing to Drive and deletes the stored
+tokens.</p>
+
+<h2>Contact</h2>
+<p>CHFT Valuation Advisory · <code>bobby.hk.mak@gmail.com</code></p>
+""",
+    )
+
+
+@app.get("/terms", include_in_schema=False)
+def terms() -> HTMLResponse:
+    return _legal_page(
+        "Terms of Service",
+        "20 October 2026",
+        """
+<h2>1. Use of the service</h2>
+<p>BMA Factory is provided to authorised CHFT staff for the preparation of
+property valuation workpapers. Access is personal to the valuer and may not be
+shared. Generated outputs are drafts for professional review; they are not
+final valuations and must not be issued or relied upon without the valuer's
+review and signature.</p>
+
+<h2>2. Professional responsibility</h2>
+<p>The app assembles figures from data you supply and from public sources. It
+does not exercise professional judgement. Every comparable selection, every
+adopted value and every assumption recorded in the output remains the
+valuer's responsibility, in accordance with the applicable valuation
+standards.</p>
+
+<h2>3. Data accuracy</h2>
+<p>Market statistics and imagery are retrieved from third-party sources
+including the Rating and Valuation Department and Centaline. The app does not
+independently verify that third-party data is accurate or current. Check any
+figure you rely upon against the source before use.</p>
+
+<h2>4. Availability</h2>
+<p>The service is provided on an as-is basis for internal use. It may be
+interrupted for maintenance or changes in third-party services without notice.</p>
+
+<h2>5. Liability</h2>
+<p>To the fullest extent permitted by law, CHFT Valuation Advisory accepts no
+liability for loss arising from reliance on the output of this tool prior to
+professional review.</p>
+
+<h2>6. Governing terms</h2>
+<p>Use of this service constitutes acceptance of these terms. These terms may
+be updated from time to time; the date above indicates the current version.</p>
+""",
+    )
+
+
 @app.get("/diag", include_in_schema=False)
 def diag() -> JSONResponse:
     """Smoke-test everything and return every diagnostic as JSON."""
