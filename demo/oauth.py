@@ -67,6 +67,12 @@ SECRET_NAME = os.environ.get("VF_TOKEN_SECRET", "")
 PROJECT_ID  = os.environ.get("GOOGLE_CLOUD_PROJECT", "bma-factory")
 _SECRET_API = "https://secretmanager.googleapis.com/v1/projects"
 
+# Cloud Storage fallback for the token. The runtime service account already
+# has project-level Storage Object Admin, so this needs no extra grant —
+# unlike Secret Manager, which needs an admin role we do not have.
+TOKEN_BUCKET = os.environ.get("VF_TOKEN_BUCKET", "")
+TOKEN_OBJECT = os.environ.get("VF_TOKEN_OBJECT", "bma-factory/app/oauth-token.json")
+
 
 def is_configured() -> bool:
     """True if the OAuth client ID + secret are set in the env."""
@@ -74,6 +80,59 @@ def is_configured() -> bool:
 
 
 _SA_LAST_ERROR: Optional[str] = None
+
+
+def _gcs_write(blob: str) -> bool:
+    """Write the token JSON to a private Cloud Storage object."""
+    if not TOKEN_BUCKET:
+        return False
+    token = _sa_access_token()
+    if not token:
+        return False
+    import urllib.parse
+    import urllib.request
+    obj = urllib.parse.quote(TOKEN_OBJECT, safe="")
+    url = (f"https://storage.googleapis.com/upload/storage/v1/b/{TOKEN_BUCKET}"
+           f"/o?uploadType=media&name={obj}")
+    req = urllib.request.Request(
+        url, method="POST", data=blob.encode("utf-8"),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            r.read()
+        log.info("stored OAuth token in gs://%s/%s", TOKEN_BUCKET, TOKEN_OBJECT)
+        return True
+    except urllib.error.HTTPError as e:
+        log.warning("GCS write failed: %s %s", e.code, e.reason)
+        return False
+    except Exception as e:  # noqa: BLE001
+        log.warning("GCS write failed: %s", e)
+        return False
+
+
+def _gcs_read() -> Optional[str]:
+    """Read the token JSON from Cloud Storage."""
+    if not TOKEN_BUCKET:
+        return None
+    token = _sa_access_token()
+    if not token:
+        return None
+    import urllib.parse
+    import urllib.request
+    obj = urllib.parse.quote(TOKEN_OBJECT, safe="")
+    url = f"https://storage.googleapis.com/storage/v1/b/{TOKEN_BUCKET}/o/{obj}?alt=media"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return r.read().decode("utf-8")
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            log.warning("GCS read failed: %s %s", e.code, e.reason)
+        return None
+    except Exception as e:  # noqa: BLE001
+        log.warning("GCS read failed: %s", e)
+        return None
 
 
 def _sa_credentials():
@@ -276,7 +335,18 @@ def secret_store_status() -> dict:
         out["can_read_version"] = False
         out["read_version_error"] = str(e)[:120]
     out["can_write"] = _secret_write(json.dumps({"probe": True}))
-    out["ok"] = bool(out.get("can_write"))
+    # Cloud Storage store — the one that actually works with the roles we have.
+    out["gcs_bucket"] = TOKEN_BUCKET or None
+    out["gcs_object"] = TOKEN_OBJECT if TOKEN_BUCKET else None
+    if TOKEN_BUCKET:
+        out["gcs_can_write"] = _gcs_write(json.dumps({"probe": True}))
+        out["gcs_can_read"] = _gcs_read() is not None
+    out["ok"] = bool(out.get("gcs_can_write") or out.get("can_write"))
+    out["durable_store"] = (
+        "gcs" if out.get("gcs_can_write")
+        else "secretmanager" if out.get("can_write")
+        else None
+    )
     return out
 
 
@@ -358,24 +428,29 @@ def read_auth_context(value: str) -> Optional[dict]:
 
 
 def save_credentials(creds: Credentials) -> None:
-    """Persist the credentials to Secret Manager (preferred) or /tmp."""
+    """Persist the credentials durably: GCS, then Secret Manager, then /tmp."""
     blob = creds.to_json()
-    if _secret_write(blob):
-        # Keep a local copy too — it lets the running instance use the token
-        # immediately without a round trip, and survives a Secret Manager blip.
+    # Always keep a local copy — it lets this instance use the token straight
+    # away without a round trip, and survives a remote-store blip.
+    try:
         TOKEN_DIR.mkdir(parents=True, exist_ok=True)
         TOKEN_FILE.write_text(blob)
         TOKEN_FILE.chmod(0o600)
+    except Exception as e:  # noqa: BLE001
+        log.warning("could not write local token copy: %s", e)
+
+    if _gcs_write(blob):
         return
-    TOKEN_DIR.mkdir(parents=True, exist_ok=True)
-    TOKEN_FILE.write_text(blob)
-    TOKEN_FILE.chmod(0o600)
-    log.info("saved OAuth credentials locally (Secret Manager unavailable)")
+    if _secret_write(blob):
+        return
+    log.warning("saved OAuth credentials locally only — no durable store available")
 
 
 def load_credentials() -> Optional[Credentials]:
-    """Load the stored credentials, refreshing if expired."""
-    blob = _secret_read()
+    """Load the stored credentials from any durable store, refreshing if expired."""
+    blob = _gcs_read()
+    if blob is None:
+        blob = _secret_read()
     if blob is None:
         if not TOKEN_FILE.exists():
             return None
@@ -397,9 +472,25 @@ def load_credentials() -> Optional[Credentials]:
 
 
 def clear_credentials() -> None:
-    """Sign out — drop the local copy and destroy the Secret Manager version."""
+    """Sign out — drop the local copy and delete the durable copies."""
     if TOKEN_FILE.exists():
         TOKEN_FILE.unlink()
+    if TOKEN_BUCKET:
+        token = _sa_access_token()
+        if token:
+            import urllib.parse
+            import urllib.request
+            obj = urllib.parse.quote(TOKEN_OBJECT, safe="")
+            url = f"https://storage.googleapis.com/storage/v1/b/{TOKEN_BUCKET}/o/{obj}"
+            req = urllib.request.Request(
+                url, method="DELETE",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    r.read()
+            except Exception as e:  # noqa: BLE001
+                log.warning("could not delete GCS token object: %s", e)
     if SECRET_NAME:
         token = _sa_access_token()
         if token:
