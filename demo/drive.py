@@ -47,6 +47,77 @@ _lock = threading.Lock()
 _folder_ids: dict[str, str] = {}
 _drive = None
 
+#: Persistent cache of path -> folder id, in Cloud Storage.
+#:
+#: A cold start otherwise walks the whole path against the Drive API —
+#: roughly twenty sequential round trips, which is several seconds on
+#: every request after the container sleeps.
+#:
+#: The cache is safe because **moving a folder does not change its id**.
+#: Only deleting and recreating it would, and that shows up as a miss on
+#: the next lookup, which falls back to the API.
+_CACHE_OBJECT = "bma-factory/drive/folder-cache.json"
+_cache_loaded = False
+_cache_dirty = False
+
+
+def _load_cache() -> None:
+    global _cache_loaded
+    if _cache_loaded:
+        return
+    _cache_loaded = True
+    try:
+        from demo.oauth import _gcs_read_from
+        blob = _gcs_read_from(_CACHE_OBJECT)
+        if not blob:
+            return
+        import json as _json
+        data = _json.loads(blob)
+        if isinstance(data, dict):
+            with _lock:
+                for k, v in data.items():
+                    if isinstance(k, str) and isinstance(v, str):
+                        _folder_ids.setdefault(k, v)
+            log.info("loaded %d cached Drive folder ids", len(_folder_ids))
+    except Exception as e:  # noqa: BLE001
+        log.warning("could not load the Drive folder cache: %s", e)
+
+
+def _save_cache() -> None:
+    """Persist the cache — but only when it actually changed.
+
+    Called after every lookup, so an unconditional write would be one
+    Cloud Storage write per folder segment per request.
+    """
+    global _cache_dirty
+    if not _cache_dirty:
+        return
+    _cache_dirty = False
+    try:
+        from demo.oauth import _gcs_write_to
+        import json as _json
+        with _lock:
+            payload = _json.dumps(_folder_ids, ensure_ascii=False)
+        _gcs_write_to(payload, _CACHE_OBJECT)
+    except Exception as e:  # noqa: BLE001
+        log.warning("could not save the Drive folder cache: %s", e)
+
+
+def _cache_set(key: str, value: str) -> None:
+    global _cache_dirty
+    with _lock:
+        if _folder_ids.get(key) != value:
+            _folder_ids[key] = value
+            _cache_dirty = True
+
+
+def _cache_drop(key: str) -> None:
+    global _cache_dirty
+    with _lock:
+        if key in _folder_ids:
+            del _folder_ids[key]
+            _cache_dirty = True
+
 
 def _get_drive():
     """Lazy auth — uses Bobby's OAuth credentials, not a service account.
@@ -80,39 +151,43 @@ def _find_or_create_folder(name: str, parent_id: str | None = None) -> str:
     """
     drive_id = _shared_drive_id()
     cache_key = f"{parent_id or 'root'}/{name}"
+    _load_cache()
     with _lock:
         if cache_key in _folder_ids:
             return _folder_ids[cache_key]
-        drive = _get_drive()
-        kwargs: dict[str, Any] = {
-            "q": f"name='{name}' and mimeType='{FOLDER_MIME}' and trashed=false",
-            "fields": "files(id,name,parents)",
-            "pageSize": 5,
-        }
-        if drive_id:
-            kwargs["corpora"] = "drive"
-            kwargs["driveId"] = drive_id
-            kwargs["includeItemsFromAllDrives"] = True
-            kwargs["supportsAllDrives"] = True
-            kwargs["q"] += f" and '{drive_id}' in parents"
-        elif parent_id:
-            kwargs["q"] += f" and '{parent_id}' in parents"
-        r = drive.files().list(**kwargs).execute()
-        files = r.get("files", [])
-        if files:
+    drive = _get_drive()
+    kwargs: dict[str, Any] = {
+        "q": f"name='{name}' and mimeType='{FOLDER_MIME}' and trashed=false",
+        "fields": "files(id,name,parents)",
+        "pageSize": 5,
+    }
+    if drive_id:
+        kwargs["corpora"] = "drive"
+        kwargs["driveId"] = drive_id
+        kwargs["includeItemsFromAllDrives"] = True
+        kwargs["supportsAllDrives"] = True
+        kwargs["q"] += f" and '{drive_id}' in parents"
+    elif parent_id:
+        kwargs["q"] += f" and '{parent_id}' in parents"
+    r = drive.files().list(**kwargs).execute()
+    files = r.get("files", [])
+    if files:
+        with _lock:
             _folder_ids[cache_key] = files[0]["id"]
-            return files[0]["id"]
-        # Create
-        body: dict[str, Any] = {"name": name, "mimeType": FOLDER_MIME}
-        if drive_id:
-            body["parents"] = [drive_id]
-        elif parent_id:
-            body["parents"] = [parent_id]
-        create_kwargs: dict[str, Any] = {"body": body, "fields": "id,name", "supportsAllDrives": True}
-        f = drive.files().create(**create_kwargs).execute()
-        _folder_ids[cache_key] = f["id"]
-        log.info("created Drive folder %r → %s (under %s)", name, f["id"], parent_id or "root")
-        return f["id"]
+        _save_cache()
+        return files[0]["id"]
+    # Create
+    body: dict[str, Any] = {"name": name, "mimeType": FOLDER_MIME}
+    if drive_id:
+        body["parents"] = [drive_id]
+    elif parent_id:
+        body["parents"] = [parent_id]
+    create_kwargs: dict[str, Any] = {"body": body, "fields": "id,name", "supportsAllDrives": True}
+    f = drive.files().create(**create_kwargs).execute()
+    _cache_set(cache_key, f["id"])
+    _save_cache()
+    log.info("created Drive folder %r → %s (under %s)", name, f["id"], parent_id or "root")
+    return f["id"]
 
 
 def resolve_path(path: str, create: bool = True) -> str:
@@ -138,6 +213,11 @@ def resolve_path(path: str, create: bool = True) -> str:
 def _find_child(name: str, parent_id: str | None) -> str | None:
     """Find a child folder by name. None if it does not exist."""
     drive_id = _shared_drive_id()
+    _load_cache()
+    cache_key = f"{parent_id or 'root'}/{name}"
+    with _lock:
+        if cache_key in _folder_ids:
+            return _folder_ids[cache_key]
     drive = _get_drive()
     kwargs: dict[str, Any] = {
         "q": f"name='{name}' and mimeType='{FOLDER_MIME}' and trashed=false",
@@ -153,7 +233,15 @@ def _find_child(name: str, parent_id: str | None) -> str | None:
     elif parent_id:
         kwargs["q"] += f" and '{parent_id}' in parents"
     files = drive.files().list(**kwargs).execute().get("files", [])
-    return files[0]["id"] if files else None
+    if not files:
+        # A miss may mean the folder was deleted and recreated. Drop the
+        # stale entry so the next lookup goes back to the API.
+        _cache_drop(cache_key)
+        _save_cache()
+        return None
+    _cache_set(cache_key, files[0]["id"])
+    _save_cache()
+    return files[0]["id"]
 
 
 def app_folder(name: str) -> str:
@@ -240,8 +328,10 @@ def move_folder(folder_id: str, new_parent_id: str) -> dict[str, Any]:
         supportsAllDrives=True,
     ).execute()
     with _lock:
-        for k in [k for k in _folder_ids if k.endswith("/" + f.get("name", ""))]:
-            _folder_ids.pop(k, None)
+        stale = [k for k in _folder_ids if k.endswith("/" + f.get("name", ""))]
+    for k in stale:
+        _cache_drop(k)
+    _save_cache()
     log.info("moved Drive folder %s → parent %s", f.get("name"), new_parent_id)
     return {"moved": True, "folder": f.get("name"), "id": f.get("id"),
             "parent": new_parent_id, "previous_parent": old_parent}
@@ -303,7 +393,7 @@ def describe_layout() -> dict[str, Any]:
         # Name the parent so the report reads like a person wrote it.
         for f in found:
             pid = (f.get("parents") or [None])[0]
-            if pid and pid != root_id:
+            if pid and pid != root_id and not is_at_drive_root([pid]):
                 try:
                     pf = drive.files().get(
                         fileId=pid, fields="id,name", supportsAllDrives=True
@@ -311,10 +401,8 @@ def describe_layout() -> dict[str, Any]:
                     entry.setdefault("parent_names", []).append(pf.get("name") or pid)
                 except Exception:  # noqa: BLE001
                     entry.setdefault("parent_names", []).append(pid)
-            elif pid is None or is_at_drive_root([pid]):
-                entry.setdefault("parent_names", []).append("My Drive")
             else:
-                entry.setdefault("parent_names", []).append(root_id)
+                entry.setdefault("parent_names", []).append("My Drive")
         entry["status"] = (
             "in place" if in_place
             else "at Drive root" if at_root

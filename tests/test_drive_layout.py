@@ -138,6 +138,7 @@ class DriveLayoutTests(unittest.TestCase):
         D._get_drive = self._real_get_drive
         D._folder_ids.clear()
         D._root_id_cache = None
+        D._cache_loaded = False
         D.DRIVE_ROOT_PATH = self._real_path
 
     # -- path resolution ---------------------------------------------
