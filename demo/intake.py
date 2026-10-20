@@ -25,9 +25,11 @@ branch, so a new agency extract is a new entry, not a new if-statement.
 from __future__ import annotations
 
 import io
+import inspect
 import json
 import logging
 import re
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -816,10 +818,37 @@ _parsed_cache: dict[str, Any] = {}
 _parsed_loaded = False
 _parsed_lock = threading.Lock()
 
+#: Version of the parse output, derived from the parsing code itself.
+#:
+#: A cache keyed only on the file and its timestamp cannot tell that the
+#: code behind it changed, so a fix to the parser keeps serving the old
+#: answer until the file is touched. Hashing the source means any change
+#: to how a file is read invalidates the cache automatically.
+_parse_version_cache: Optional[str] = None
+
+
+def _parse_version() -> str:
+    """A short digest of the code that decides what a file means."""
+    global _parse_version_cache
+    if _parse_version_cache is not None:
+        return _parse_version_cache
+    import hashlib
+    h = hashlib.sha256()
+    for mod in (sys.modules.get(__name__), sys.modules.get("demo.sections")):
+        src = ""
+        if mod is not None:
+            try:
+                src = inspect.getsource(mod)
+            except Exception:  # noqa: BLE001
+                src = getattr(mod, "__file__", "") or ""
+        h.update(src.encode("utf-8", "replace"))
+    _parse_version_cache = h.hexdigest()[:12]
+    return _parse_version_cache
+
 
 def _parse_key(file_id: str, modified_time: str) -> str:
     stamp = (modified_time or "").replace(":", "").replace("-", "").replace(".", "")
-    return f"{file_id}-{stamp}"
+    return f"{file_id}-{stamp}-{_parse_version()}"
 
 
 def _load_parsed_cache() -> None:

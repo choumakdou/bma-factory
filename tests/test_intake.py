@@ -402,3 +402,23 @@ class TestScanSetting(unittest.TestCase):
             r = client.post("/intake/scan", data={"folders": "default"})
         self.assertEqual(r.status_code, 303)
         self.assertIn("bma_intake_scan=", r.headers.get("set-cookie", ""))
+
+
+class TestCacheVersioning(unittest.TestCase):
+    """A cache keyed on the file alone cannot tell that the code changed."""
+
+    def test_the_parse_version_is_derived_from_the_code(self):
+        from demo import intake
+        v1 = intake._parse_version()
+        self.assertTrue(v1)
+        self.assertEqual(v1, intake._parse_version())
+
+    def test_the_cache_key_includes_the_version(self):
+        from demo import intake
+        a = intake._parse_key("F1", "2026-09-21T04:00:00Z")
+        b = intake._parse_key("F1", "2026-09-21T04:00:00Z")
+        self.assertEqual(a, b)
+        self.assertIn(intake._parse_version(), a)
+        # a different file, or a different mtime, is a different key
+        self.assertNotEqual(a, intake._parse_key("F2", "2026-09-21T04:00:00Z"))
+        self.assertNotEqual(a, intake._parse_key("F1", "2026-09-22T04:00:00Z"))
