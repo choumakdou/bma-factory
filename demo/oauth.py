@@ -20,6 +20,7 @@ Secret Manager for the token and adds a users table.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -151,14 +152,21 @@ def _secret_write(blob: str) -> bool:
         return False
 
 
-def get_flow() -> "Flow":  # type: ignore
+def get_flow(code_verifier: Optional[str] = None) -> "Flow":  # type: ignore
+    """Build the OAuth flow.
+
+    ``code_verifier`` must be the PKCE verifier that was used for the
+    authorization request, otherwise the token exchange fails with
+    ``invalid_grant``. google_auth_oauthlib auto-generates one per Flow
+    instance, so the value has to be carried across the redirect.
+    """
     from google_auth_oauthlib.flow import Flow
     if not is_configured():
         raise RuntimeError(
             "OAuth not configured. Set GOOGLE_OAUTH_CLIENT_ID and "
             "GOOGLE_OAUTH_CLIENT_SECRET in the container env."
         )
-    return Flow.from_client_config(
+    flow = Flow.from_client_config(
         {
             "web": {
                 "client_id":     CLIENT_ID,
@@ -171,6 +179,54 @@ def get_flow() -> "Flow":  # type: ignore
         scopes=SCOPES,
         redirect_uri=REDIRECT_URI,
     )
+    if code_verifier:
+        flow.code_verifier = code_verifier
+    return flow
+
+
+# ---------------------------------------------------------------------------
+# Signed cookie carrying the PKCE verifier + state between /auth/login and
+# /auth/callback. Stdlib only — no extra dependency.
+# ---------------------------------------------------------------------------
+
+_COOKIE_NAME = "bma_oauth_ctx"
+_COOKIE_TTL = 600  # 10 minutes is plenty for a consent screen
+
+
+def _sign(blob: bytes) -> str:
+    import hmac
+    import hashlib
+    key = (CLIENT_SECRET or CLIENT_ID or "bma-factory").encode("utf-8")
+    sig = hmac.new(key, blob, hashlib.sha256).digest()[:16]
+    return base64.urlsafe_b64encode(sig).decode("ascii")
+
+
+def make_auth_context(code_verifier: str, state: str) -> str:
+    """Build the signed, URL-safe context value for the cookie."""
+    raw = json.dumps({"v": code_verifier, "s": state}).encode("utf-8")
+    return f"{base64.urlsafe_b64encode(raw).decode('ascii')}.{_sign(raw)}"
+
+
+def read_auth_context(value: str) -> Optional[dict]:
+    """Verify and decode the context cookie. None if tampered or expired."""
+    import hmac
+    import time
+    try:
+        b64, sig = value.rsplit(".", 1)
+        raw = base64.urlsafe_b64decode(b64 + "=" * (-len(b64) % 4))
+        if not hmac.compare_digest(sig, _sign(raw)):
+            log.warning("OAuth context cookie failed signature check")
+            return None
+        data = json.loads(raw)
+        if not data.get("ts"):
+            data["ts"] = time.time()
+        if time.time() - float(data["ts"]) > _COOKIE_TTL:
+            log.warning("OAuth context cookie expired")
+            return None
+        return data
+    except Exception as e:  # noqa: BLE001
+        log.warning("could not read OAuth context cookie: %s", e)
+        return None
 
 
 def save_credentials(creds: Credentials) -> None:

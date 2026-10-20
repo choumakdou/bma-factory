@@ -367,7 +367,7 @@ async def _on_startup() -> None:
 @app.get("/auth/login")
 def auth_login():
     """Redirect to Google's consent screen."""
-    from demo.oauth import get_flow
+    from demo.oauth import get_flow, make_auth_context
     try:
         flow = get_flow()
     except RuntimeError as e:
@@ -375,30 +375,60 @@ def auth_login():
             {"ok": False, "error": str(e), "hint": "Set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET in the container env."},
             status_code=503,
         )
-    auth_url, _state = flow.authorization_url(
+    auth_url, state = flow.authorization_url(
         access_type="offline",          # request a refresh token
         include_granted_scopes="true",
         prompt="consent",               # force re-consent to get a fresh refresh token
     )
-    return RedirectResponse(auth_url)
+    # Carry the PKCE verifier and the CSRF state to the callback in a
+    # signed cookie. The cookie travels with the browser, so the callback
+    # works even if Cloud Run routes it to a different instance.
+    ctx = make_auth_context(flow.code_verifier, state)
+    resp = RedirectResponse(auth_url)
+    resp.set_cookie(
+        "bma_oauth_ctx", ctx,
+        max_age=600, httponly=True, samesite="lax", secure=True, path="/",
+    )
+    return resp
 
 
 @app.get("/auth/callback")
-def auth_callback(code: str = "", error: str = ""):
-    """Google redirects here with ?code=... after the user signs in."""
-    from demo.oauth import get_flow, save_credentials
+def auth_callback(request: Request, code: str = "", error: str = "",
+                  state: str = ""):
+    """Google redirects here with ?code=... after the user signs in.
+
+    The PKCE code_verifier and the CSRF state both travel in a signed
+    cookie set at /auth/login. Without the verifier the token exchange
+    fails with invalid_grant; without the state check the callback is
+    open to CSRF.
+    """
+    from demo.oauth import get_flow, make_auth_context, read_auth_context, save_credentials
     if error:
         return RedirectResponse(url=f"/?auth_error={error}", status_code=302)
     if not code:
         return RedirectResponse(url="/?auth_error=missing_code", status_code=302)
+
+    ctx = read_auth_context(request.cookies.get("bma_oauth_ctx", ""))
+    if ctx is None:
+        log.warning("OAuth callback had no valid context cookie — "
+                    "the sign-in took too long, or the cookie was dropped")
+        return RedirectResponse(url="/?auth_error=expired_or_missing_state",
+                                status_code=302)
+    if state and ctx.get("s") and state != ctx["s"]:
+        log.warning("OAuth state mismatch — possible CSRF, aborting")
+        return RedirectResponse(url="/?auth_error=state_mismatch", status_code=302)
+
     try:
-        flow = get_flow()
+        flow = get_flow(code_verifier=ctx.get("v"))
         flow.fetch_token(code=code)
         save_credentials(flow.credentials)
     except Exception as e:
         log.exception("OAuth callback failed")
         return RedirectResponse(url=f"/?auth_error={type(e).__name__}", status_code=302)
-    return RedirectResponse(url="/?auth=ok", status_code=302)
+
+    resp = RedirectResponse(url="/?auth=ok", status_code=302)
+    resp.delete_cookie("bma_oauth_ctx", path="/")
+    return resp
 
 
 @app.get("/auth/status")
