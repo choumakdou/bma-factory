@@ -20,7 +20,7 @@ permissions:
 
 env:
   PROJECT: bma-factory
-  REGION: asia-east2
+  REGION: asia-east1
   SERVICE: bma-factory-demo
   RUNTIME_SA: service-ac1@bma-factory.iam.gserviceaccount.com
   SECRET_NAME: engine-sa-key
