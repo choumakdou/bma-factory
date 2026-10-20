@@ -124,6 +124,61 @@ class TestGeneration(unittest.TestCase):
         self.assertEqual(a.input_hash, b.input_hash)
         self.assertEqual(a.artifacts[0].sha256, b.artifacts[0].sha256)
 
+    def test_output_does_not_leak_the_clock(self):
+        """The same input must give the same bytes at any time of day.
+
+        Two separate leaks had to be closed for this to hold:
+        the ZIP entry timestamps, and the `dcterms:modified` stamp that
+        openpyxl writes at save time (overwriting the pinned value).
+        This test corrupts both deliberately and checks that the
+        normaliser repairs them, so it fails loudly if either leak
+        comes back.
+        """
+        import zipfile
+
+        r = generate.generate(
+            "hk-rental-comps", PAYLOAD, caller="clock", out_dir=Path(tempfile.mkdtemp(dir=_TMP))
+        )
+        path = Path(r.artifacts[0].path)
+        good = r.artifacts[0].sha256
+
+        # Re-stamp the container and the document properties with a
+        # different clock, then normalise again.
+        with zipfile.ZipFile(path) as src:
+            entries = [(i, src.read(i.filename)) for i in src.infolist()]
+        tmp = path.with_name(path.name + ".tmp")
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as dst:
+            for info, data in entries:
+                new = zipfile.ZipInfo(info.filename, date_time=(2031, 7, 4, 9, 26, 53))
+                new.compress_type = info.compress_type
+                # Preserve everything the normaliser preserves, so the only
+                # difference between the two files is the clock.
+                new.external_attr = info.external_attr
+                new.internal_attr = info.internal_attr
+                new.create_system = info.create_system
+                if info.filename == "docProps/core.xml":
+                    data = data.replace(
+                        b"2000-01-01T00:00:00Z", b"2031-07-04T09:26:53Z"
+                    )
+                dst.writestr(new, data)
+        tmp.replace(path)
+
+        self.assertNotEqual(ledger.file_hash(path), good)
+        self.assertTrue(generate.normalise_zip_timestamps(path))
+        self.assertEqual(ledger.file_hash(path), good)
+
+    def test_normalised_zip_is_still_readable(self):
+        """Rewriting the container must not corrupt the workbook."""
+        import openpyxl
+
+        r = generate.generate(
+            "hk-rental-comps", PAYLOAD, caller="readable",
+            out_dir=Path(tempfile.mkdtemp(dir=_TMP)),
+        )
+        wb = openpyxl.load_workbook(r.artifacts[0].path)
+        self.assertIn("Comps", wb.sheetnames)
+        self.assertEqual(wb.properties.modified.year, 2000)
+
     def test_determinism_formatting_does_not_change_output(self):
         """'HK$220,000' and '220000' must produce the identical file."""
         alt = dict(PAYLOAD)

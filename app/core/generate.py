@@ -66,6 +66,77 @@ def _output_dir() -> Path:
     return out
 
 
+# Every OOXML/ODF file is a ZIP container, and a ZIP entry stores the
+# wall-clock time it was written. Left alone, that leaks the clock into the
+# bytes: the same input generated on two different days produces two
+# different files, which is exactly what this project exists to prevent.
+#
+# There is a second leak. openpyxl (and python-docx) stamp `dcterms:modified`
+# with the current time *at save time*, overwriting whatever the module
+# pinned, so the document properties have to be repaired after the write.
+#
+# 1980-01-01 is the ZIP epoch and is the conventional choice for
+# reproducible builds -- Excel ignores it, and it carries no information.
+_ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
+_ZIP_SUFFIXES = {".xlsx", ".xlsm", ".docx", ".pptx", ".ods", ".odt", ".odp"}
+_CORE_XML = "docProps/core.xml"
+
+
+def _pin_core_xml(data: bytes) -> bytes:
+    """Force the modified/created stamps in core.xml back to the fixed value."""
+    import re
+
+    from .ledger import FIXED_TIMESTAMP
+
+    stamp = FIXED_TIMESTAMP.strftime("%Y-%m-%dT%H:%M:%SZ")
+    text = data.decode("utf-8")
+    for tag in ("modified", "created"):
+        text = re.sub(
+            rf"(<dcterms:{tag}\b[^>]*>)[^<]*(</dcterms:{tag}>)",
+            rf"\g<1>{stamp}\g<2>",
+            text,
+        )
+    return text.encode("utf-8")
+
+
+def normalise_zip_timestamps(path: Path) -> bool:
+    """Rewrite a ZIP-container document with fixed entry timestamps.
+
+    Also repairs the `dcterms:modified` stamp that openpyxl writes at save
+    time, which would otherwise leak the clock into every file.
+
+    Returns True if the file was rewritten. Non-ZIP files and files that
+    are not ZIP containers are left untouched.
+    """
+    if path.suffix.lower() not in _ZIP_SUFFIXES:
+        return False
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(path) as src:
+            entries = [(i, src.read(i.filename)) for i in src.infolist()]
+    except (zipfile.BadZipFile, OSError):
+        return False
+
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as dst:
+            for info, data in entries:
+                if info.filename == _CORE_XML:
+                    data = _pin_core_xml(data)
+                new = zipfile.ZipInfo(filename=info.filename, date_time=_ZIP_EPOCH)
+                new.compress_type = info.compress_type
+                new.external_attr = info.external_attr
+                new.internal_attr = info.internal_attr
+                new.create_system = info.create_system
+                dst.writestr(new, data)
+        tmp.replace(path)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+    return True
+
+
 def generate(
     module_id: str,
     payload: dict[str, Any],
@@ -108,12 +179,15 @@ def generate(
         shutil.rmtree(dest, ignore_errors=True)
         raise GenerationRefused(["generator produced no files"])
 
-    # 5. hash the outputs
+    # 5. normalise container timestamps, THEN hash the outputs
+    #    Hashing has to come after normalisation, or the recorded sha256
+    #    is of a file whose bytes still carry the clock.
     artifacts: list[Artifact] = []
     for item in produced:
         path = Path(item["path"])
         if not path.exists():
             raise GenerationRefused([f"generator reported {path.name} but it does not exist"])
+        normalise_zip_timestamps(path)
         artifacts.append(
             Artifact(
                 filename=path.name,
