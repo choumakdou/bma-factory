@@ -368,29 +368,19 @@ def _project_from_memfus(subject: Any, evidence: list[Any], sheet_name: str) -> 
     area = int(subject.area_sf) if subject.area_sf else 0
     rate = round(price / area) if price and area else 0
 
-    title = subject.building or subject.address or "Memfus Wong extract"
-    return {
-        "id": slug,
-        "title": _pretty_address(title),
-        "category": _category_for_usage(subject.usage),
-        "case_ref": subject.mem_no or "",
-        "address": _pretty_address(subject.address),
-        "address_raw": subject.address,
-        "district": subject.district,
-        "valuation_date": subject.date.isoformat() if subject.date else "",
-        "adopted_value_hkd": price,
-        "adopted_rate_psf_n": rate,
-        "nfa_sqft": area,
-        "usage": subject.usage or "",
-        "summary": (
-            f"{len(evidence)} comparables from a Memfus Wong extract "
-            f"({sheet_name})."
-        ),
-        "source_sheet": sheet_name,
-        "source_format": "memfus-mw",
-        "floor": subject.floor,
-        "unit": subject.flat,
-    }
+    from demo.sections import project_from_subject
+
+    project = project_from_subject(
+        subject, category=_category_for_usage(subject.usage)
+    )
+    project["title"] = _pretty_address(project["title"])
+    project["address"] = _pretty_address(project["address"])
+    project["summary"] = (
+        f"{len(evidence)} comparables from a Memfus Wong extract "
+        f"({sheet_name})."
+    )
+    project["source_sheet"] = sheet_name
+    return project
 
 
 def _clean_rows(dicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -899,6 +889,20 @@ def parse_drive_file(f: DriveFile) -> ParsedWorkbook:
     parsed = parse_workbook_bytes(data)
     store_cached(f.id, f.modified_time, parsed)
     return parsed
+
+
+def project_from_sections(parsed: ParsedWorkbook) -> Optional[dict[str, Any]]:
+    """The project a workbook implies, taken from its sections.
+
+    A workbook whose first sheet is the subject record parses as a
+    one-row generic table at the top level, so the subject never
+    reaches ``ParsedWorkbook.project``. The sections know better.
+    """
+    for kind in ("comps", "subject", "extract"):
+        for s in parsed.sections:
+            if s.get("kind") == kind and s.get("project"):
+                return s["project"]
+    return parsed.project
 
 
 def find_file(file_id: str, folders: tuple[str, ...] = INTAKE_FOLDERS) -> Optional[DriveFile]:

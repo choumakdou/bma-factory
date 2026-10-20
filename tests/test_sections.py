@@ -141,6 +141,17 @@ class TestWorkingFile(unittest.TestCase):
         self.assertEqual(subject["adopted_value_hkd"], 76_000_000)
         self.assertEqual(len(comps), 5)
 
+    def test_both_paths_give_the_same_project(self):
+        """The same subject must be one project, whichever way the file
+        was read. Two derivations, two ids, means two projects."""
+        from demo.intake import project_from_sections
+        from demo.sample_extract import build_workbook_bytes
+        flat = parse_workbook_bytes(build_workbook_bytes())
+        work = project_from_sections(self.parsed)
+        self.assertEqual(flat.project["id"], work["id"])
+        self.assertEqual(flat.project["adopted_value_hkd"],
+                         work["adopted_value_hkd"])
+
     def test_a_flat_extract_still_works(self):
         """The old single-sheet extract must not regress."""
         from demo.sample_extract import build_workbook_bytes

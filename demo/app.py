@@ -296,7 +296,13 @@ def _intake_rows(
             "total_rows": parsed.total_rows,
             "qc_counts": parsed.qc_counts,
             "error": parsed.error,
-            "project": parsed.project,
+            "project": intake.project_from_sections(parsed),
+            "sections": [
+                {"id": s.get("id"), "label": s.get("label"),
+                 "kind": s.get("kind"), "sheet": s.get("sheet"),
+                 "rows": len(s.get("rows") or [])}
+                for s in parsed.sections
+            ],
         })
         rows.append(d)
     return rows
@@ -417,13 +423,7 @@ def content_page(request: Request, file_id: str) -> HTMLResponse:
     parsed = intake.parse_drive_file(f)
     # Prefer the section that carries the adopted comparables over the
     # raw extract — the adjustments beside them are the better evidence.
-    project = None
-    for s in parsed.sections:
-        if s.get("kind") == "comps" and s.get("project"):
-            project = s["project"]
-            break
-    if project is None:
-        project = parsed.project
+    project = intake.project_from_sections(parsed)
     return templates.TemplateResponse(
         request,
         "content.html",

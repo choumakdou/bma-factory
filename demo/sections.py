@@ -257,6 +257,26 @@ class SectionSpec:
     enrich: Optional[Callable[[Section], None]] = None
 
 
+#: Maps a usage string to a case category. Same table as the intake
+#: module — one subject, one classification.
+USAGE_CATEGORY = [
+    (("office", "commercial", "godown"), "Office / Commercial"),
+    (("shop", "retail", "store"), "Shop / Retail"),
+    (("industrial", "warehouse", "factory", "godown"), "Industrial"),
+    (("car park", "carpark", "parking"), "Industrial"),
+    (("residence", "residential", "flat", "house"), "Residential"),
+    (("land", "site"), "Land"),
+]
+
+
+def _category_for_usage(usage: str) -> str:
+    u = (usage or "").lower()
+    for keys, cat in USAGE_CATEGORY:
+        if any(k in u for k in keys):
+            return cat
+    return "Residential"
+
+
 def _detect_adopted_comps(headers: list[str]) -> bool:
     """Comparables with an adjustment ladder beside them.
 
@@ -312,19 +332,21 @@ def _enrich_subject(section: Section) -> None:
         "records": len(rows),
     }
     keys = {h: v for h, v in record.items() if v not in (None, "")}
+    building = _first_str(keys, ("SUBJECT", "PROPERTY", "BUILDING", "PREMISES", "ADDRESS", "NAME"))
+    district = _first_str(keys, ("DISTRICT", "D_CODE", "AREA", "LOCATION"))
     section.project = {
-        "id": _slug_from_record(keys),
-        "title": _first_str(keys, ("SUBJECT", "PROPERTY", "BUILDING", "PREMISES", "ADDRESS", "NAME")),
+        # The same canonical slug the extract path uses, so the same
+        # property is one project, not two.
+        "id": project_slug(building, district),
+        "title": building,
         "address": _first_str(keys, ("ADDRESS", "FULL ADDRESS", "PREMISES", "LOCATION")),
-        "district": _first_str(keys, ("DISTRICT", "D_CODE", "AREA", "LOCATION")),
+        "district": district,
         "valuation_date": _first_str(keys, ("VALUATION DATE", "VALUATION_DATE", "EFFECTIVE DATE", "DATE")),
         "adopted_value_hkd": _first_num(keys, ("ADOPTED VALUE", "ADOPTED_VALUE", "VALUE", "CONSIDERATION", "PRICE", "CAPITAL VALUE")),
         "nfa_sqft": _first_num(keys, ("NFA", "NET AREA", "NET FLOOR AREA", "NET AREA (SF)", "AREA (SF)")),
         "usage": _first_str(keys, ("USAGE", "PROPERTY TYPE", "TENURE USE", "LAND USE")),
-        "category": "Residential",
+        "category": _category_for_usage(_first_str(keys, ("USAGE", "PROPERTY TYPE", "LAND USE"))),
     }
-    if section.project["id"]:
-        section.project["id"] = f"subj-{section.project['id']}"[:60]
 
 
 def _enrich_comps(section: Section) -> None:
@@ -348,16 +370,9 @@ def _enrich_comps(section: Section) -> None:
         "date_max": max(dates).isoformat() if dates else None,
     }
     if subject is not None:
-        section.project = {
-            "id": f"comps-{_slug_from_record({'address': subject.address, 'building': subject.building})}",
-            "title": subject.building or subject.address,
-            "address": subject.address,
-            "district": subject.district,
-            "adopted_value_hkd": int(subject.price_hkd) if subject.price_hkd else 0,
-            "nfa_sqft": int(subject.area_sf) if subject.area_sf else 0,
-            "usage": subject.usage,
-            "category": "Office / Commercial",
-        }
+        section.project = project_from_subject(
+            subject, category=_category_for_usage(subject.usage)
+        )
 
 
 def _enrich_extract(section: Section) -> None:
@@ -368,6 +383,48 @@ def _enrich_table(section: Section) -> None:
     section.stats = {
         "rows": len(section.rows),
         "columns": len([h for h in section.headers if h.strip()]),
+    }
+
+
+def project_slug(building: str, district: str = "") -> str:
+    """The canonical project id for a subject.
+
+    One derivation, used everywhere. The same subject must not become
+    two projects because one path read it from the extract and another
+    read it from a section.
+    """
+    bits = [b for b in (building or "", district or "") if b]
+    stem = re.sub(r"[^a-z0-9]+", "-", " ".join(bits).lower()).strip("-")
+    return f"mw-{stem or 'extract'}"[:60]
+
+
+def project_from_subject(
+    subject: Any,
+    category: str = "Residential",
+    source: str = "memfus-mw",
+) -> dict[str, Any]:
+    """The canonical project dict for a Memfus Wong subject row."""
+    price = int(subject.price_hkd) if subject.price_hkd else 0
+    area = int(subject.area_sf) if subject.area_sf else 0
+    rate = round(price / area) if price and area else 0
+    return {
+        "id": project_slug(subject.building, subject.district),
+        "title": subject.building or subject.address or "Memfus Wong extract",
+        "category": category,
+        "case_ref": subject.mem_no or "",
+        "address": subject.address,
+        "address_raw": getattr(subject, "address", ""),
+        "district": subject.district,
+        "valuation_date": subject.date.isoformat() if subject.date else "",
+        "adopted_value_hkd": price,
+        "adopted_rate_psf_n": rate,
+        "nfa_sqft": area,
+        "usage": subject.usage or "",
+        "summary": "",
+        "source_sheet": "",
+        "source_format": source,
+        "floor": subject.floor,
+        "unit": subject.flat,
     }
 
 
