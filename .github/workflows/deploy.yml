@@ -104,6 +104,10 @@ jobs:
             --quiet || echo "  (nothing to clean, first run or already clean)"
 
           # Step 2: Deploy the new image with the desired env vars.
+          # The explicit TCP startup probe gives the container up to
+          # 240s (period 2s x failureThreshold 120) to open PORT 8080
+          # instead of Cloud Run's default 240 x 1s window, and it
+          # removes the HTTP dependency on the app answering /.
           gcloud run deploy "${{ env.SERVICE }}" \
             --image "${{ env.IMAGE }}" \
             --region "${{ env.REGION }}" \
@@ -112,6 +116,8 @@ jobs:
             --update-secrets "GOOGLE_APPLICATION_CREDENTIALS=${{ env.SECRET_NAME }}:latest" \
             ${ENV_CSV:+--set-env-vars "$ENV_CSV"} \
             --allow-unauthenticated \
+            --port 8080 \
+            --startup-probe "tcpSocket.port=8080,initialDelaySeconds=0,periodSeconds=2,timeoutSeconds=1,failureThreshold=120" \
             --memory 512Mi \
             --cpu 1 \
             --min-instances 0 \
