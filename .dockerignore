@@ -1,8 +1,14 @@
 .venv/
 __pycache__/
 *.pyc
-data/
+# Runtime artefacts under data/ are excluded, but the reference data
+# (parsed ORO case database, CHFT Map VBA source, case database notes)
+# must be in the image — the engine reads them at runtime.
+data/outputs/
+data/runs/
+data/ledger.sqlite3
 .pytest_cache/
 .git/
 *.md
 !README.md
+!data/*.md
