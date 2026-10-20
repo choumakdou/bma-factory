@@ -23,4 +23,4 @@ ENV PORT=8080
 EXPOSE 8080
 
 # Run the demo FastAPI app. For production, swap in the full API router.
-CMD ["python", "-u", "demo/boot.py"]
+CMD ["python", "-u", "demo/serve_minimal.py"]
