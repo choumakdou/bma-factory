@@ -122,6 +122,27 @@ class TestProjectDerivation(unittest.TestCase):
         self.assertTrue(all(c["nfa_sqft"] > 0 for c in comps))
         self.assertTrue(all(c["psf_net"] > 0 for c in comps))
 
+    def test_address_is_put_into_house_style(self):
+        """The extract gives "510 KING'S RD, Hong Kong" — the house style is
+        "510 King's Road, Hong Kong"."""
+        p = self.parsed.project
+        self.assertEqual(p["address"], "510 King's Road, Hong Kong")
+        # the raw value is kept for anything that needs to geocode it
+        self.assertEqual(p["address_raw"], "510 KING'S RD, Hong Kong")
+
+    def test_address_formatting_does_not_mangle_possessives_or_acronyms(self):
+        from demo.intake import _pretty_address
+        self.assertEqual(
+            _pretty_address("AIA Kowloon Tower, 183 AMOY RD, Hong Kong"),
+            "AIA Kowloon Tower, 183 Amoy Road, Hong Kong",
+        )
+        self.assertEqual(
+            _pretty_address("31 HANG LOK ST, Hong Kong"),
+            "31 Hang Lok Street, Hong Kong",
+        )
+        # "HANG LOK" is two short romanised words, not an acronym
+        self.assertNotIn("LOK", _pretty_address("31 HANG LOK ST, Hong Kong"))
+
     def test_a_workbook_without_a_subject_yields_no_project(self):
         """A comps-only extract is evidence, not a project."""
         import io

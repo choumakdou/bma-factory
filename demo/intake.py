@@ -264,6 +264,86 @@ def _category_for_usage(usage: str) -> str:
     return "Residential"
 
 
+#: Street and building suffixes, expanded for display only. The compass
+#: letters are deliberately absent — a standalone "N" or "S" in an
+#: address is far more often a floor or a unit than a direction.
+STREET_SUFFIX = {
+    "RD": "Road", "ST": "Street", "AVE": "Avenue", "LN": "Lane",
+    "PL": "Place", "GD": "Garden", "GDNS": "Gardens", "CT": "Court",
+    "BLK": "Block", "BLDG": "Building", "CTR": "Centre",
+    "B/F": "Basement", "G/F": "Ground Floor", "1/F": "1st Floor",
+}
+
+#: Acronyms that keep their capitals. An explicit list, not a length
+#: heuristic — HK street names are romanised Chinese words, so "HANG LOK"
+#: and "SUN YIP" are full of short all-caps tokens that are not acronyms.
+ACRONYMS = {
+    "AIA", "HKT", "HSBC", "KCRC", "MTR", "LHT", "PCCW", "HKPC", "CITIC",
+    "CKH", "SHK", "NWS", "SPL", "HKEX", "CWCH", "HKG", "HKRI", "HKTEL",
+}
+
+#: Words that stay lowercase in a title-cased address. Deliberately short:
+#: "a" and "an" are left out because "Shop A" and "Block B" are unit
+#: designations, not articles.
+SMALL_WORDS = {"of", "and", "the", "for", "to"}
+
+
+def _title_word(w: str, first: bool) -> str:
+    """Title-case one word without breaking possessives."""
+    if not w:
+        return w
+    low = w.lower()
+    if not first and low in SMALL_WORDS:
+        return low
+    all_caps = w.isupper()
+    parts = w.split("'")
+    out = []
+    for i, p in enumerate(parts):
+        if not p:
+            out.append(p)
+            continue
+        if i > 0:
+            # The "'s" tail. "KING'S" -> "King's", not "KingS".
+            out.append(p.lower() if all_caps else p)
+        else:
+            out.append(p.capitalize())
+    return "'".join(out)
+
+
+def _pretty_address(addr: str) -> str:
+    """Put a street address into the house style.
+
+    The extract gives us "510 KING'S RD, Hong Kong" — all caps and
+    abbreviated. The house style is title case with the abbreviation
+    spelled out: "510 King's Road, Hong Kong".
+
+    Token-based on purpose. ``ingest.memfus.expand_abbrev`` is a geocoding
+    pre-pass and rewrites single letters, which turns "KING'S" into
+    "KING' SOUTH". This only expands a suffix when it stands alone as a
+    word, so apostrophes and possessives survive.
+    """
+    if not addr:
+        return ""
+    out_parts: list[str] = []
+    for chunk in addr.split(", "):
+        words = chunk.split(" ")
+        rebuilt: list[str] = []
+        for i, w in enumerate(words):
+            bare = w.strip(",.")
+            key = bare.upper()
+            # Only a standalone token is a suffix.
+            if bare and key in STREET_SUFFIX and bare == w.strip(",. ") and len(bare) > 1:
+                rebuilt.append(STREET_SUFFIX[key])
+                continue
+            # A known acronym keeps its capitals: "AIA", "HKT".
+            if bare in ACRONYMS and bare == w:
+                rebuilt.append(bare)
+                continue
+            rebuilt.append(_title_word(w, i == 0))
+        out_parts.append(" ".join(rebuilt))
+    return ", ".join(out_parts)
+
+
 def _project_from_memfus(subject: Any, evidence: list[Any], sheet_name: str) -> dict[str, Any]:
     """Derive a project (case) from the subject row of a Memfus Wong extract."""
     # A stable slug from the subject's identity, not from the file name, so
@@ -279,12 +359,14 @@ def _project_from_memfus(subject: Any, evidence: list[Any], sheet_name: str) -> 
     area = int(subject.area_sf) if subject.area_sf else 0
     rate = round(price / area) if price and area else 0
 
+    title = subject.building or subject.address or "Memfus Wong extract"
     return {
         "id": slug,
-        "title": subject.building or subject.address or "Memfus Wong extract",
+        "title": _pretty_address(title),
         "category": _category_for_usage(subject.usage),
         "case_ref": subject.mem_no or "",
-        "address": subject.address,
+        "address": _pretty_address(subject.address),
+        "address_raw": subject.address,
         "district": subject.district,
         "valuation_date": subject.date.isoformat() if subject.date else "",
         "adopted_value_hkd": price,
@@ -640,8 +722,9 @@ def comps_to_relevance(comps: list[Any]) -> list[dict[str, Any]]:
         psf = round(price / nfa, 2) if nfa and price else 0.0
         out.append({
             "src_row": c.src_row,
-            "name": memfus.display_name(c.row),
-            "address": c.address,
+            "name": _pretty_address(memfus.display_name(c.row)),
+            "address": _pretty_address(c.address),
+            "address_raw": c.address,
             "building": c.building,
             "district": c.district,
             "floor": c.floor,
