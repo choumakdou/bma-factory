@@ -267,7 +267,7 @@ def _intake_rows() -> list[dict[str, Any]]:
         try:
             parsed = intake.parse_drive_file(f)
         except Exception as e:  # noqa: BLE001
-            log.warning("intake parse failed for %s: %s", f.name, e)
+            log.warning("intake parse failed for %s: %s", e)
             continue
         d = f.to_dict()
         d.update({
@@ -285,12 +285,24 @@ def _intake_rows() -> list[dict[str, Any]]:
 @app.get("/intake", response_class=HTMLResponse)
 def intake_page(request: Request) -> HTMLResponse:
     """The content page — Excel files from Drive, parsed and listed."""
+    from demo.oauth import can_read_all_drive, granted_scopes
+
     auth = _auth_state()
     rows = _intake_rows() if auth["signed_in"] else []
+    # A sign-in that only holds `drive.file` cannot see files the valuer
+    # put in Drive himself. Say so, rather than showing an empty list that
+    # looks like the app is broken.
+    limited = auth["signed_in"] and not can_read_all_drive()
     return templates.TemplateResponse(
         request,
         "intake.html",
-        {"auth": auth, "files": rows, "upload_error": None},
+        {
+            "auth": auth,
+            "files": rows,
+            "upload_error": None,
+            "limited_scope": limited,
+            "granted_scopes": granted_scopes(),
+        },
     )
 
 
@@ -365,10 +377,14 @@ async def upload(request: Request):
 @app.get("/api/intake", include_in_schema=False)
 def api_intake() -> dict[str, Any]:
     """JSON view of the intake listing (for agents / MCP)."""
+    from demo.oauth import can_read_all_drive, granted_scopes
+
     auth = _auth_state()
     return {
         "signed_in": auth["signed_in"],
         "user": auth["user"],
+        "can_read_all_drive": can_read_all_drive(),
+        "granted_scopes": granted_scopes(),
         "files": _intake_rows() if auth["signed_in"] else [],
     }
 

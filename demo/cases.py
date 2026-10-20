@@ -144,6 +144,9 @@ def get_drive_cases() -> list[Case]:
 
     out: list[Case] = []
     seen: set[str] = set()
+    # `files` is newest-first, so the first file that yields a given
+    # subject wins. A re-uploaded extract therefore supersedes the older
+    # one for the same subject instead of being silently dropped.
     for f in files:
         try:
             parsed = intake.parse_drive_file(f)

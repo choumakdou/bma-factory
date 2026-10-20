@@ -288,3 +288,66 @@ class TestPages(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestScopeGuard(unittest.TestCase):
+    """The sign-in must be able to see files the valuer put in Drive himself."""
+
+    def test_requested_scopes_include_readonly(self):
+        from demo.oauth import DRIVE_READ_SCOPE, SCOPES
+        self.assertIn(DRIVE_READ_SCOPE, SCOPES)
+        # drive.file stays, so the app can still write what it owns
+        self.assertIn("https://www.googleapis.com/auth/drive.file", SCOPES)
+
+    def test_a_limited_sign_in_is_reported(self):
+        """A token without drive.readonly must be detectable, not silent."""
+        from unittest import mock
+        from demo import oauth
+        with mock.patch.object(oauth, "granted_scopes", return_value=[
+            "https://www.googleapis.com/auth/drive.file",
+            "openid",
+        ]):
+            self.assertFalse(oauth.can_read_all_drive())
+        with mock.patch.object(oauth, "granted_scopes", return_value=[
+            "https://www.googleapis.com/auth/drive.readonly",
+            "https://www.googleapis.com/auth/drive.file",
+        ]):
+            self.assertTrue(oauth.can_read_all_drive())
+
+    def test_content_page_explains_a_limited_sign_in(self):
+        from unittest import mock
+        from fastapi.testclient import TestClient
+        from demo.app import app
+        client = TestClient(app)
+        with mock.patch("demo.app._auth_state", return_value={
+                "signed_in": True, "configured": True,
+                "user": {"email": "bobby.hk.mak@gmail.com"},
+            }), \
+             mock.patch("demo.oauth.granted_scopes", return_value=[
+                 "https://www.googleapis.com/auth/drive.file",
+             ]), \
+             mock.patch("demo.oauth.can_read_all_drive", return_value=False):
+            r = client.get("/intake")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("cannot see files you put in Drive yourself", r.text)
+        self.assertIn("drive.readonly", r.text)
+
+    def test_api_intake_reports_the_scope(self):
+        from unittest import mock
+        from fastapi.testclient import TestClient
+        from demo.app import app
+        client = TestClient(app)
+        with mock.patch("demo.app._auth_state", return_value={
+                "signed_in": True, "configured": True,
+                "user": {"email": "bobby.hk.mak@gmail.com"},
+            }), \
+             mock.patch("demo.oauth.granted_scopes", return_value=[
+                 "https://www.googleapis.com/auth/drive.readonly",
+             ]), \
+             mock.patch("demo.oauth.can_read_all_drive", return_value=True):
+            r = client.get("/api/intake")
+        d = r.json()
+        self.assertTrue(d["can_read_all_drive"])
+        self.assertIn(
+            "https://www.googleapis.com/auth/drive.readonly", d["granted_scopes"]
+        )

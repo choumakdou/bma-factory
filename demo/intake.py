@@ -623,6 +623,10 @@ def list_drive_workbooks(folders: tuple[str, ...] = INTAKE_FOLDERS) -> list[Driv
                 web_view_link=f.get("webViewLink", ""),
                 mime_type=mime,
             ))
+    # Newest first across all folders, not per folder. A re-uploaded
+    # extract supersedes the older one for the same subject, and the
+    # project derivation relies on that order.
+    out.sort(key=lambda f: f.modified_time, reverse=True)
     return out
 
 

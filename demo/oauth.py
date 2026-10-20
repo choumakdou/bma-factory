@@ -39,11 +39,27 @@ log = logging.getLogger("bma-factory.oauth")
 
 # Drive access scoped to files the app creates — not full Drive read.
 # openid + userinfo.email lets us display "Signed in as X" on the home page.
+#: Scopes requested at sign-in.
+#:
+#: `drive.file` alone is NOT enough for the content intake. It grants
+#: access only to files the app created, or that the valuer explicitly
+#: shared with it through the file picker. A workbook the valuer drops
+#: into a Drive folder by hand is completely invisible to the app — which
+#: looks exactly like the app being broken.
+#:
+#: `drive.readonly` fixes that: read every file in the valuer's Drive.
+#: `drive.file` is kept alongside it so the app can still create and write
+#: the files it owns (the /Outputs/ workbooks) without gaining permission
+#: to modify anything else the valuer keeps in Drive.
 SCOPES = [
+    "https://www.googleapis.com/auth/drive.readonly",
     "https://www.googleapis.com/auth/drive.file",
     "openid",
     "https://www.googleapis.com/auth/userinfo.email",
 ]
+
+#: The scope the app must hold for content intake to work at all.
+DRIVE_READ_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 
 CLIENT_ID     = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
 CLIENT_SECRET = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
@@ -635,6 +651,29 @@ def get_drive():
             "Not signed in. Visit /auth/login to sign in with Google."
         )
     return gbuild("drive", "v3", credentials=creds, cache_discovery=False)
+
+
+def granted_scopes() -> list[str]:
+    """The scopes on the stored token, or [] if nobody is signed in.
+
+    Used to tell "Drive is empty" apart from "this sign-in cannot see
+    files the valuer put there himself" — the two look identical from
+    the outside, and the second one is a permissions problem, not a data
+    problem.
+    """
+    try:
+        blob = _gcs_read()
+        if not blob:
+            return []
+        info = json.loads(blob)
+        return list(info.get("scopes") or [])
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def can_read_all_drive() -> bool:
+    """True when the token can see files the valuer created himself."""
+    return DRIVE_READ_SCOPE in granted_scopes()
 
 
 def get_user_info() -> Optional[dict]:

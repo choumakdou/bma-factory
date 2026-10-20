@@ -20,6 +20,34 @@
   </header>
 
   <main class="case-main">
+    {% if limited_scope %}
+    <section class="card" style="border-left:3px solid #b06000">
+      <h2>⚠ This sign-in cannot see files you put in Drive yourself</h2>
+      <p class="muted">
+        Your current sign-in only holds <code>drive.file</code>, which lets
+        the app see the files it created — and nothing else. A workbook you
+        drop into <code>/Intake/</code> by hand is invisible to it, so the
+        list below looks empty.
+      </p>
+      <p class="muted">
+        The fix is a wider read scope. It has to be added in
+        <b>Google Auth Platform → Data Access</b>:
+      </p>
+      <p><code>https://www.googleapis.com/auth/drive.readonly</code></p>
+      <p class="muted">
+        Then sign out and sign in again — Google only issues the new scope
+        on a fresh consent.
+      </p>
+      <p>
+        <a class="gen-btn" href="/auth/signout">Sign out</a>
+        <span class="muted small">then use “Sign in with Google”</span>
+      </p>
+      <p class="muted small">
+        Granted now: {% for s in granted_scopes %}<code>{{ s }}</code>{% if not loop.last %} · {% endif %}{% endfor %}
+      </p>
+    </section>
+    {% endif %}
+
     {% if not auth.signed_in %}
     <section class="card">
       <h2>Sign in to see your content</h2>
