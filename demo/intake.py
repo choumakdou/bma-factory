@@ -631,7 +631,12 @@ def list_drive_workbooks(
         targets.append(("My Drive", "root"))
     for folder in folders:
         try:
-            targets.append((folder, _find_or_create_folder(folder)))
+            from demo.drive import app_folder_if_exists
+            fid = app_folder_if_exists(folder)
+            if fid is None:
+                # Not there yet. Do not create it just because we looked.
+                continue
+            targets.append((folder, fid))
         except Exception as e:  # noqa: BLE001
             log.warning("cannot resolve folder %s: %s", folder, e)
     for fid in folder_ids:

@@ -361,6 +361,26 @@ async def set_scan(request: Request):
     return response
 
 
+@app.get("/drive/layout", include_in_schema=False)
+def drive_layout() -> JSONResponse:
+    """Where the app's folders are in Drive, and where they should be."""
+    from demo.drive import describe_layout
+    return JSONResponse(describe_layout())
+
+
+@app.post("/drive/organise", include_in_schema=False)
+def drive_organise() -> JSONResponse:
+    """Move the app's folders under the configured root path.
+
+    Idempotent and scoped: it touches only the four folders the app
+    owns, and only moves ones that are direct children of the Drive
+    root. Anything it cannot do, it reports rather than guessing.
+    """
+    from demo.drive import organise_drive
+    report = organise_drive()
+    return JSONResponse({"ok": not report.get("errors"), "report": report})
+
+
 @app.get("/content/{file_id}", response_class=HTMLResponse)
 def content_page(request: Request, file_id: str) -> HTMLResponse:
     """The content of one workbook."""
@@ -591,13 +611,21 @@ async def _on_startup() -> None:
         if load_credentials() is None:
             log.info("not signed in yet — skipping Drive layout warm-up")
             return
-        from demo.drive import ensure_drive_layout
-        layout = ensure_drive_layout()
-        log.info("Drive layout ready: %s", layout)
+        from demo.drive import APP_FOLDERS, app_folder_if_exists
+        # Find-only. Creating the folders here would put empty copies at
+        # the new path before the tidy-up has moved the real ones, and
+        # then the tidy-up has two candidates to choose between.
+        present = {
+            name: app_folder_if_exists(name) for name in APP_FOLDERS
+        }
+        log.info(
+            "Drive layout: %s",
+            {k: ("present" if v else "missing") for k, v in present.items()},
+        )
     except Exception as e:
         # Don't crash the container if Drive is unavailable; the /generate
         # endpoint will surface the error.
-        log.warning("Drive layout not created on startup: %s", e)
+        log.warning("Drive layout check failed on startup: %s", e)
 
 
 # ---------------------------------------------------------------------------
