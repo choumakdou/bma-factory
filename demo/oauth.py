@@ -70,7 +70,8 @@ _SECRET_API = "https://secretmanager.googleapis.com/v1/projects"
 # Cloud Storage fallback for the token. The runtime service account already
 # has project-level Storage Object Admin, so this needs no extra grant —
 # unlike Secret Manager, which needs an admin role we do not have.
-TOKEN_BUCKET = os.environ.get("VF_TOKEN_BUCKET", "")
+TOKEN_BUCKET = os.environ.get("VF_TOKEN_BUCKET", "") or os.environ.get(
+    "GOOGLE_CLOUD_PROJECT", "bma-factory") + "_cloudbuild"
 TOKEN_OBJECT = os.environ.get("VF_TOKEN_OBJECT", "bma-factory/app/oauth-token.json")
 
 

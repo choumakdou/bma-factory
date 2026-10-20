@@ -26,6 +26,11 @@ env:
   SECRET_NAME: engine-sa-key
   TOKEN_SECRET: user-oauth-token
   IMAGE: gcr.io/bma-factory/bma-factory-demo
+  # Durable store for Bobby's OAuth token. The runtime service account
+  # already has project-level Storage Object Admin, so this works with the
+  # roles we have today — no new IAM grant required.
+  TOKEN_BUCKET: bma-factory_cloudbuild
+  TOKEN_OBJECT: bma-factory/app/oauth-token.json
   # The Shared Drive the engine writes to. Without this set, the engine
   # falls back to the SA's Drive root — which fails on personal Google
   # accounts with "Service Accounts do not have storage quota".
@@ -89,6 +94,8 @@ jobs:
           fi
           ENV_LIST+=("VF_TOKEN_SECRET=${{ env.TOKEN_SECRET }}")
           ENV_LIST+=("GOOGLE_CLOUD_PROJECT=${{ env.PROJECT }}")
+          ENV_LIST+=("VF_TOKEN_BUCKET=${{ env.TOKEN_BUCKET }}")
+          ENV_LIST+=("VF_TOKEN_OBJECT=${{ env.TOKEN_OBJECT }}")
           if [ ${#ENV_LIST[@]} -gt 0 ]; then
             ENV_CSV=$(IFS=,; echo "${ENV_LIST[*]}")
           else
