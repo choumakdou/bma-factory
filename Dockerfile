@@ -23,4 +23,4 @@ ENV PORT=8080
 EXPOSE 8080
 
 # Run the demo FastAPI app. For production, swap in the full API router.
-CMD ["uvicorn", "demo.app:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1", "--log-level", "info"]
+CMD ["python", "-u", "demo/boot.py"]

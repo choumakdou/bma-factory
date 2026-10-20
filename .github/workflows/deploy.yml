@@ -20,7 +20,7 @@ permissions:
 
 env:
   PROJECT: bma-factory
-  REGION: asia-east1
+  REGION: asia-east2
   SERVICE: bma-factory-demo
   RUNTIME_SA: service-ac1@bma-factory.iam.gserviceaccount.com
   SECRET_NAME: engine-sa-key
@@ -83,6 +83,9 @@ jobs:
           if [ -n "${{ vars.VF_DRIVE_ID }}" ]; then
             ENV_LIST+=("VF_DRIVE_ID=${{ vars.VF_DRIVE_ID }}")
           fi
+          if [ -n "${{ secrets.VF_DIAG_TOKEN }}" ]; then
+            ENV_LIST+=("VF_DIAG_TOKEN=${{ secrets.VF_DIAG_TOKEN }}")
+          fi
           if [ ${#ENV_LIST[@]} -gt 0 ]; then
             ENV_CSV=$(IFS=,; echo "${ENV_LIST[*]}")
           else
@@ -90,20 +93,10 @@ jobs:
           fi
           echo "==> env vars: $ENV_CSV"
 
-          # Step 1: Clean up env vars from any previous failed deploy.
-          # Earlier failed runs may have set GOOGLE_OAUTH_CLIENT_SECRET as
-          # a Secret Manager reference, but we want it as a plain env var.
-          # gcloud won't let us change the type in one step, so we remove
-          # first, then re-add.
-          echo "==> Cleaning up any stale env-var types from previous deploys"
-          gcloud run services update "${{ env.SERVICE }}" \
-            --region "${{ env.REGION }}" \
-            --remove-env-vars "GOOGLE_OAUTH_CLIENT_ID,GOOGLE_OAUTH_CLIENT_SECRET,VF_DRIVE_ID" \
-            --remove-secrets "GOOGLE_OAUTH_CLIENT_SECRET" \
-            --project "${{ env.PROJECT }}" \
-            --quiet || echo "  (nothing to clean, first run or already clean)"
-
-          # Step 2: Deploy the new image with the desired env vars.
+          # NOTE: no --set-secrets / --update-secrets. The engine writes to
+          # Drive with the valuer's OAuth credentials, so the service-account
+          # key is never read. Mounting it was blocking container startup.
+          echo "==> Deploying (no service-account key mount — OAuth only)"
           # The explicit TCP startup probe gives the container up to
           # 240s (period 2s x failureThreshold 120) to open PORT 8080
           # instead of Cloud Run's default 240 x 1s window, and it
@@ -113,7 +106,6 @@ jobs:
             --region "${{ env.REGION }}" \
             --platform managed \
             --service-account "${{ env.RUNTIME_SA }}" \
-            --update-secrets "GOOGLE_APPLICATION_CREDENTIALS=${{ env.SECRET_NAME }}:latest" \
             ${ENV_CSV:+--set-env-vars "$ENV_CSV"} \
             --allow-unauthenticated \
             --port 8080 \
