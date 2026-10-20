@@ -188,6 +188,38 @@ def folder_parent_id(folder_id: str) -> str:
     return parents[0] if parents else ""
 
 
+_root_id_cache: str | None = None
+
+
+def root_folder_id() -> str:
+    """The id of "My Drive" root.
+
+    Do not assume a file at the root has an empty ``parents`` list. On
+    some accounts Drive reports the root's own numeric id
+    (``0ANLh9MR99SLaUk9PVA``) instead, so "is this folder at the root?"
+    has to compare against the real root id rather than test for
+    emptiness.
+    """
+    global _root_id_cache
+    if _root_id_cache is not None:
+        return _root_id_cache
+    drive = _get_drive()
+    try:
+        f = drive.files().get(fileId="root", fields="id", supportsAllDrives=True).execute()
+        _root_id_cache = f.get("id") or "root"
+    except Exception as e:  # noqa: BLE001
+        log.warning("could not resolve the Drive root id: %s", e)
+        _root_id_cache = "root"
+    return _root_id_cache
+
+
+def is_at_drive_root(parents: list[str] | None) -> bool:
+    """True when a file sits directly in "My Drive"."""
+    if not parents:
+        return True
+    return root_folder_id() in parents
+
+
 def move_folder(folder_id: str, new_parent_id: str) -> dict[str, Any]:
     """Move a folder under a new parent.
 
@@ -265,9 +297,24 @@ def describe_layout() -> dict[str, Any]:
         in_place = bool(root_id) and any(
             root_id in (f.get("parents") or []) for f in found
         )
-        at_root = any(not (f.get("parents") or []) for f in found)
+        at_root = any(is_at_drive_root(f.get("parents")) for f in found)
         entry["in_place"] = in_place
         entry["at_drive_root"] = at_root
+        # Name the parent so the report reads like a person wrote it.
+        for f in found:
+            pid = (f.get("parents") or [None])[0]
+            if pid and pid != root_id:
+                try:
+                    pf = drive.files().get(
+                        fileId=pid, fields="id,name", supportsAllDrives=True
+                    ).execute()
+                    entry.setdefault("parent_names", []).append(pf.get("name") or pid)
+                except Exception:  # noqa: BLE001
+                    entry.setdefault("parent_names", []).append(pid)
+            elif pid is None or is_at_drive_root([pid]):
+                entry.setdefault("parent_names", []).append("My Drive")
+            else:
+                entry.setdefault("parent_names", []).append(root_id)
         entry["status"] = (
             "in place" if in_place
             else "at Drive root" if at_root
@@ -359,7 +406,8 @@ def organise_drive(create_root: bool = True) -> dict[str, Any]:
             continue
 
         in_place = [f for f in found if root_id in (f.get("parents") or [])]
-        at_root = [f for f in found if not (f.get("parents") or [])]
+        at_root = [f for f in found
+                   if f not in in_place and is_at_drive_root(f.get("parents"))]
         other = [f for f in found
                  if f not in in_place and f not in at_root]
 

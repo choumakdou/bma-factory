@@ -39,6 +39,9 @@ class FakeDrive:
         self.nodes: dict[str, dict] = {}
         self._n = 0
         self.updates: list[dict] = []
+        # My Drive root, as the API reports it on this account: a real id
+        # in `parents`, not an empty list.
+        self.root_id = "0ROOT"
 
     def _new_id(self) -> str:
         self._n += 1
@@ -48,7 +51,8 @@ class FakeDrive:
         nid = self._new_id()
         self.nodes[nid] = {
             "id": nid, "name": name, "mimeType": mime,
-            "parents": [parent] if parent else [], "trashed": False,
+            "parents": [parent if parent is not None else self.root_id],
+            "trashed": False,
         }
         return nid
 
@@ -78,6 +82,8 @@ class FakeDrive:
         return _FakeResult(out)
 
     def get(self, fileId=None, **kwargs):
+        if fileId == "root":
+            return _FakeResult({"id": self.root_id})
         n = self.nodes[fileId]
         return _FakeResult({
             "id": n["id"], "name": n["name"], "parents": list(n["parents"]),
@@ -126,10 +132,12 @@ class DriveLayoutTests(unittest.TestCase):
         D._folder_ids.clear()
         self._real_path = D.DRIVE_ROOT_PATH
         D.DRIVE_ROOT_PATH = "bma-factory/Valuation"
+        D._root_id_cache = None
 
     def tearDown(self):
         D._get_drive = self._real_get_drive
         D._folder_ids.clear()
+        D._root_id_cache = None
         D.DRIVE_ROOT_PATH = self._real_path
 
     # -- path resolution ---------------------------------------------
@@ -162,7 +170,7 @@ class DriveLayoutTests(unittest.TestCase):
         self.assertNotIn(target, (top, nested))
         self.assertEqual(self.fake.nodes[target]["name"], "Intake")
         # and the root one is still where it was
-        self.assertEqual(self.fake.nodes[top]["parents"], [])
+        self.assertEqual(self.fake.nodes[top]["parents"], [self.fake.root_id])
 
     def test_app_folder_if_exists_does_not_create(self):
         self.assertIsNone(D.app_folder_if_exists("Intake"))
@@ -203,7 +211,7 @@ class DriveLayoutTests(unittest.TestCase):
         self.assertEqual(len(moved_intake), 1)
         # The second "Intake" was not touched — it stays at the Drive root.
         self.assertNotIn(stranger, [m["id"] for m in moved_intake])
-        self.assertEqual(self.fake.nodes[stranger]["parents"], [])
+        self.assertEqual(self.fake.nodes[stranger]["parents"], [self.fake.root_id])
 
     def test_organise_merges_when_one_is_already_in_place(self):
         """A same-named folder at the root and one in place → merge, not
@@ -227,6 +235,21 @@ class DriveLayoutTests(unittest.TestCase):
         self.fake.add("Intake")
         report = D.organise_drive()
         self.assertEqual(sorted(report["missing"]), ["ORO", "Outputs", "Templates"])
+
+    def test_a_folder_at_my_drive_root_is_recognised(self):
+        """Drive reports the root as a real id in `parents` on this account,
+        not as an empty list. A folder sitting in My Drive must still be
+        seen as 'at the root' and be movable."""
+        self.assertEqual(self.fake.nodes[self.fake.add("Intake")]["parents"],
+                         [self.fake.root_id])
+        self.assertTrue(D.is_at_drive_root([self.fake.root_id]))
+        self.assertTrue(D.is_at_drive_root([]))
+        self.assertFalse(D.is_at_drive_root(["SOMEOtherFOLDER"]))
+
+        report = D.organise_drive()
+        self.assertEqual(len(report["moved"]), 1)
+        self.assertEqual(report["moved"][0]["folder"], "Intake")
+        self.assertEqual(report["errors"], [])
 
     def test_describe_layout_reports_position(self):
         self._seed_root_level()
