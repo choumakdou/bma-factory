@@ -749,6 +749,18 @@ def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/health", include_in_schema=False)
+def api_health() -> dict[str, str]:
+    """Liveness, at a path the Google Front End does not intercept.
+
+    ``/healthz`` is reserved at the GFE, so a request to it never
+    reaches the app — it comes back as Google''s own HTML 404 while
+    every other unknown path comes back as FastAPI''s JSON 404. This
+    route is the one to actually use.
+    """
+    return {"status": "ok"}
+
+
 # ---------------------------------------------------------------------------
 # Public pages required by the Google OAuth consent screen. The Branding page
 # wants a home page, a privacy policy URL and a terms of service URL. Serving
