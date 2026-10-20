@@ -24,6 +24,10 @@ import base64
 import json
 import logging
 import os
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Optional
 
@@ -82,6 +86,7 @@ def is_configured() -> bool:
 
 
 _SA_LAST_ERROR: Optional[str] = None
+_SA_TOKEN_CACHE: tuple[Optional[str], float] = (None, 0.0)
 
 
 def _gcs_write(blob: str) -> bool:
@@ -203,35 +208,75 @@ def _sa_credentials():
     Cloud Run mounts a secret and injects its CONTENT into the env var when
     the var is declared as a secret reference, and a FILE PATH when it is
     declared as a normal env var. The raw-JSON form starts with ``{``.
+
+    Returns ``(access_token, expires_at_epoch)``. We do the JWT exchange
+    ourselves rather than going through ``google.auth`` because that
+    library retries a failed refresh for up to two minutes, which used to
+    push a cold start past Cloud Run's four-minute startup probe.
     """
     raw = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     if not raw:
         raise RuntimeError("GOOGLE_APPLICATION_CREDENTIALS is not set")
-    import google.auth.transport.requests as tr
-    from google.oauth2 import service_account
     if raw.lstrip().startswith("{"):
-        # Raw JSON content — parse it directly.
         info = json.loads(raw)
-        creds = service_account.Credentials.from_service_account_info(
-            info, scopes=["https://www.googleapis.com/auth/cloud-platform"]
-        )
     else:
-        # A file path.
-        import google.auth
-        creds, _ = google.auth.default(
-            scopes=["https://www.googleapis.com/auth/cloud-platform"]
-        )
-    if not creds.valid:
-        creds.refresh(tr.Request())
-    return creds
+        info = json.loads(Path(raw).read_text())
+
+    import urllib.parse
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    def b64(raw_bytes: bytes) -> str:
+        return base64.urlsafe_b64encode(raw_bytes).decode("ascii").rstrip("=")
+
+    now = int(time.time())
+    header = {"alg": "RS256", "typ": "JWT"}
+    claims = {
+        "iss": info["client_email"],
+        "scope": "https://www.googleapis.com/auth/cloud-platform",
+        "aud": info.get("token_uri", "https://oauth2.googleapis.com/token"),
+        "iat": now,
+        "exp": now + 3600,
+    }
+    signing_input = (
+        b64(json.dumps(header, separators=(",", ":")).encode())
+        + "."
+        + b64(json.dumps(claims, separators=(",", ":")).encode())
+    )
+    key = serialization.load_pem_private_key(
+        info["private_key"].encode(), password=None
+    )
+    signature = key.sign(signing_input.encode(), padding.PKCS1v15(), hashes.SHA256())
+    assertion = signing_input + "." + b64(signature)
+
+    body = urllib.parse.urlencode({
+        "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        "assertion": assertion,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        info.get("token_uri", "https://oauth2.googleapis.com/token"),
+        data=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as r:
+        payload = json.loads(r.read())
+    return payload["access_token"], time.time() + int(payload.get("expires_in", 3600))
 
 
 def _sa_access_token() -> Optional[str]:
     """Access token for the app's own service account, or None."""
-    global _SA_LAST_ERROR
+    global _SA_LAST_ERROR, _SA_TOKEN_CACHE
     _SA_LAST_ERROR = None
+    # Reuse the token until shortly before it expires — a service-account
+    # token is valid for an hour and minting one costs a network round trip.
+    now = time.time()
+    cached, expiry = _SA_TOKEN_CACHE
+    if cached and now < expiry - 60:
+        return cached
     try:
-        return _sa_credentials().token
+        token, expires_at = _sa_credentials()
+        _SA_TOKEN_CACHE = (token, expires_at)
+        return token
     except Exception as e:  # noqa: BLE001
         _SA_LAST_ERROR = f"{type(e).__name__}: {str(e)[:300]}"
         log.warning("service-account auth unavailable: %s", _SA_LAST_ERROR)

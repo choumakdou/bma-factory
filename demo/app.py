@@ -347,8 +347,20 @@ def generate(case_id: str) -> JSONResponse:
 
 @app.on_event("startup")
 async def _on_startup() -> None:
-    """Create the Drive folder layout on first boot (idempotent, best effort)."""
+    """Warm the Drive folder layout on first boot (idempotent, best effort).
+
+    This must never block the container from listening on PORT 8080. A
+    google-auth refresh retries for up to two minutes on a transient
+    network error, and the startup probe gives up after four — so a slow
+    identity call used to push cold starts past the probe window. The
+    layout is also created on demand by the /generate path, so skipping
+    it here costs nothing.
+    """
     try:
+        from demo.oauth import load_credentials
+        if load_credentials() is None:
+            log.info("not signed in yet — skipping Drive layout warm-up")
+            return
         from demo.drive import ensure_drive_layout
         layout = ensure_drive_layout()
         log.info("Drive layout ready: %s", layout)
