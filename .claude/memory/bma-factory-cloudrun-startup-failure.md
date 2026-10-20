@@ -7,6 +7,12 @@ metadata:
 
 # BMA Factory — Cloud Run container-start failure (2026-10-20)
 
+## RESOLVED (2026-10-20 12:00)
+Bobby lifted the spend cap to $10. Deploy succeeded, service live, full
+end-to-end verified: /diag, /auth/status, /, /case/bel-air-m2, /generate
+(artefact produced, sha256 recorded, download works), /api/cases.
+Remaining: the OAuth sign-in click, and the Google Drive 15 GB quota.
+
 ## ROOT CAUSE
 **Billing was disabled on GCP project `bma-factory` at ~2026-10-19 17:29-17:41 UTC.**
 Every request to start a new instance was refused by Google, so the container
