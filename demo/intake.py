@@ -831,7 +831,7 @@ def subject_to_relevance(subject: Any) -> dict[str, Any]:
     return {
         "name": subject.building,
         "building": subject.building,
-        "address": subject.address,
+        "address": _pretty_address(subject.address),
         "nfa_sqft": nfa,
         "area_sf": nfa,
         "usage": subject.usage,
