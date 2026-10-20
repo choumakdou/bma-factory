@@ -31,6 +31,7 @@ if str(_REPO) not in sys.path:
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from demo.cases import Case, CaseData, CASES, get_case, get_cases_by_category, get_active_cases, get_history_cases
@@ -40,6 +41,14 @@ log = logging.getLogger("bma-factory.demo")
 
 app = FastAPI(title="bma-factory demo", version="0.2.0")
 templates = Jinja2Templates(directory=str(_REPO / "demo" / "templates"))
+
+# Static assets. The templates reference /static/style.css, so this mount is
+# required — without it every page renders unstyled and the browser logs a 404.
+_STATIC_DIR = _REPO / "demo" / "static"
+if _STATIC_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+else:  # pragma: no cover - only when the image is built without demo/static
+    log.warning("static directory not found at %s — /static will 404", _STATIC_DIR)
 
 
 # ---------------------------------------------------------------------------
