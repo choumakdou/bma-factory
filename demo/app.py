@@ -872,12 +872,34 @@ be updated from time to time; the date above indicates the current version.</p>
 def diag() -> JSONResponse:
     """Smoke-test everything and return every diagnostic as JSON."""
     import sys
+    import time
     diag: dict[str, Any] = {
         "ok": True,
         "python": sys.version.split()[0],
         "cases_total": len(CASES),
         "case_ids": [c.id for c in CASES],
+        "timings_ms": {},
     }
+
+    def _t(label: str, fn):
+        t0 = time.time()
+        try:
+            fn()
+        except Exception as e:  # noqa: BLE001
+            diag["timings_ms"][label] = f"error: {type(e).__name__}"
+            return
+        diag["timings_ms"][label] = round((time.time() - t0) * 1000)
+
+    try:
+        from demo.oauth import get_user_info
+        _t("auth_state", lambda: get_user_info())
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from demo import intake
+        _t("drive_listing", lambda: intake.list_drive_workbooks())
+    except Exception:  # noqa: BLE001
+        pass
     try:
         from app.core.registry import get_module
         loaded = get_module("hk-rental-comps")

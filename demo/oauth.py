@@ -61,6 +61,13 @@ SCOPES = [
 #: The scope the app must hold for content intake to work at all.
 DRIVE_READ_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 
+#: Cached user profile — see ``get_user_info``.
+_PROFILE_OBJECT = "bma-factory/user/profile.json"
+_PROFILE_TTL = 900          # 15 minutes
+_profile_cache: Optional[dict] = None
+_profile_fetched_at: float = 0.0
+_profile_loaded = False
+
 CLIENT_ID     = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
 CLIENT_SECRET = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
 # The redirect URI is set at deploy time so it matches the live URL exactly.
@@ -676,14 +683,55 @@ def can_read_all_drive() -> bool:
     return DRIVE_READ_SCOPE in granted_scopes()
 
 
+def _load_profile_cache() -> None:
+    """Pull the cached profile from Cloud Storage, once per container."""
+    global _profile_loaded
+    if _profile_loaded:
+        return
+    _profile_loaded = True
+    try:
+        blob = _gcs_read_from(_PROFILE_OBJECT)
+        if not blob:
+            return
+        data = json.loads(blob)
+        if isinstance(data, dict):
+            _profile_cache = data
+            log.info("loaded cached user profile for %s", data.get("email"))
+    except Exception as e:  # noqa: BLE001
+        log.warning("could not load the cached user profile: %s", e)
+
+
 def get_user_info() -> Optional[dict]:
-    """Return the signed-in user's basic profile, or None if not signed in."""
+    """Return the signed-in user's basic profile, or None if not signed in.
+
+    Cached in Cloud Storage with a short TTL. The profile only changes
+    when the valuer changes their name or picture, and this call sits on
+    the path of every page render.
+    """
     creds = load_credentials()
     if creds is None:
         return None
+
+    global _profile_cache, _profile_fetched_at
+    _load_profile_cache()
+    now = time.time()
+    if _profile_cache and now - _profile_fetched_at < _PROFILE_TTL:
+        return _profile_cache
     try:
         info = gbuild("oauth2", "v2", credentials=creds, cache_discovery=False).userinfo().get().execute()
-        return {"email": info.get("email"), "name": info.get("name"), "picture": info.get("picture")}
+        profile = {
+            "email": info.get("email"),
+            "name": info.get("name"),
+            "picture": info.get("picture"),
+        }
     except Exception as e:
         log.warning("failed to fetch userinfo: %s", e)
-        return None
+        # A stale profile beats no banner at all.
+        return _profile_cache
+    _profile_cache = profile
+    _profile_fetched_at = now
+    try:
+        _gcs_write_to(json.dumps(profile), _PROFILE_OBJECT)
+    except Exception:  # noqa: BLE001
+        pass
+    return profile

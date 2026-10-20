@@ -28,6 +28,7 @@ import io
 import json
 import logging
 import re
+import threading
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from typing import Any, Callable, Optional
@@ -700,35 +701,67 @@ def download_workbook(file_id: str) -> bytes:
 # Cache — parsed content in Cloud Storage, keyed by file id + mtime
 # ---------------------------------------------------------------------------
 
-def _cache_key(file_id: str, modified_time: str) -> str:
+#: One object holds every parsed workbook. One read per container start
+#: instead of one read per file, which is what made the console slow.
+_PARSED_OBJECT = "bma-factory/intake/parsed.json"
+_parsed_cache: dict[str, Any] = {}
+_parsed_loaded = False
+_parsed_lock = threading.Lock()
+
+
+def _parse_key(file_id: str, modified_time: str) -> str:
     stamp = (modified_time or "").replace(":", "").replace("-", "").replace(".", "")
-    return f"bma-factory/intake/{file_id}-{stamp}.json"
+    return f"{file_id}-{stamp}"
+
+
+def _load_parsed_cache() -> None:
+    global _parsed_loaded
+    if _parsed_loaded:
+        return
+    _parsed_loaded = True
+    try:
+        from demo.oauth import _gcs_read_from
+        blob = _gcs_read_from(_PARSED_OBJECT)
+        if not blob:
+            return
+        data = json.loads(blob)
+        if isinstance(data, dict):
+            with _parsed_lock:
+                _parsed_cache.update(data)
+            log.info("loaded %d parsed workbooks from cache", len(_parsed_cache))
+    except Exception as e:  # noqa: BLE001
+        log.warning("could not load the parsed-workbook cache: %s", e)
+
+
+def _save_parsed_cache() -> None:
+    try:
+        from demo.oauth import _gcs_write_to
+        with _parsed_lock:
+            payload = json.dumps(_parsed_cache, ensure_ascii=False)
+        _gcs_write_to(payload, _PARSED_OBJECT)
+    except Exception as e:  # noqa: BLE001
+        log.warning("could not save the parsed-workbook cache: %s", e)
 
 
 def load_cached(file_id: str, modified_time: str) -> Optional[ParsedWorkbook]:
-    """Read a previously parsed workbook from the cache, if present."""
-    try:
-        from demo.oauth import _gcs_read
-        blob = _gcs_read(_cache_key(file_id, modified_time))
-        if not blob:
-            return None
-        return ParsedWorkbook.from_dict(json.loads(blob))
-    except Exception as e:  # noqa: BLE001
-        log.warning("cache read failed: %s", e)
+    """A previously parsed workbook, if the cache has it."""
+    _load_parsed_cache()
+    key = _parse_key(file_id, modified_time)
+    with _parsed_lock:
+        blob = _parsed_cache.get(key)
+    if not blob:
         return None
+    return ParsedWorkbook.from_dict(blob)
 
 
 def store_cached(file_id: str, modified_time: str, parsed: ParsedWorkbook) -> bool:
     """Cache a parsed workbook so the console does not re-parse on every page view."""
-    try:
-        from demo.oauth import _gcs_write_to
-        return _gcs_write_to(
-            json.dumps(parsed.to_dict(), ensure_ascii=False),
-            _cache_key(file_id, modified_time),
-        )
-    except Exception as e:  # noqa: BLE001
-        log.warning("cache write failed: %s", e)
-        return False
+    _load_parsed_cache()
+    key = _parse_key(file_id, modified_time)
+    with _parsed_lock:
+        _parsed_cache[key] = parsed.to_dict()
+    _save_parsed_cache()
+    return True
 
 
 def parse_drive_file(f: DriveFile) -> ParsedWorkbook:
