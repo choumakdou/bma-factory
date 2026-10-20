@@ -20,16 +20,22 @@
         <span class="meta-pill">Sheet · {{ parsed.sheet_name }}</span>
         <span class="meta-pill">{{ parsed.total_rows }} rows</span>
         <span class="meta-pill">Modified {{ file.modified_time[:10] }}</span>
+        {% if parsed.sections %}
+        <span class="meta-pill">{{ parsed.sections|length }} section{{ '' if parsed.sections|length == 1 else 's' }}</span>
+        {% endif %}
       </div>
     </div>
     <div class="case-head-right">
-      {% if parsed.project %}
+      {% if project %}
       <div class="adopted">
         <div class="adopted-label">Becomes project</div>
-        <div class="adopted-figure" style="font-size:1.3rem">{{ parsed.project.title }}</div>
-        <div class="adopted-rate">HK${{ "{:,.0f}".format(parsed.project.adopted_value_hkd) }} · {{ "{:,.0f}".format(parsed.project.nfa_sqft) }} sf N</div>
+        <div class="adopted-figure" style="font-size:1.3rem">{{ project.title }}</div>
+        <div class="adopted-rate">
+          {% if project.adopted_value_hkd %}HK${{ "{:,.0f}".format(project.adopted_value_hkd) }} · {% endif %}
+          {% if project.nfa_sqft %}{{ "{:,.0f}".format(project.nfa_sqft) }} sf N{% endif %}
+        </div>
         <div style="margin-top:.5rem">
-          <a class="dl-link" href="/case/{{ parsed.project.id }}">Open the project page →</a>
+          <a class="dl-link" href="/case/{{ project.id }}">Open the project page →</a>
         </div>
       </div>
       {% endif %}
@@ -44,14 +50,6 @@
     </section>
     {% else %}
 
-    <section class="qc-strip">
-      {% for k, v in parsed.qc_counts.items() %}
-      <div class="qc-pill qc-warn"><b>{{ v }}</b> {{ k }}</div>
-      {% endfor %}
-      <div class="qc-pill qc-info"><b>{{ parsed.stats.comps if parsed.stats.comps is defined else parsed.total_rows }}</b> {{ "comps" if parsed.stats.comps is defined else "rows" }}</div>
-      <div class="qc-pill qc-info"><b>{{ parsed.stats.date_min[:4] if parsed.stats.date_min else "—" }}</b>–{{ parsed.stats.date_max[:4] if parsed.stats.date_max else "—" }}</div>
-    </section>
-
     {% if parsed.notes %}
     <section class="card">
       <h2>Notes</h2>
@@ -59,40 +57,106 @@
     </section>
     {% endif %}
 
+    {# ---- the sections this workbook turned out to contain ---- #}
+    {% for s in parsed.sections %}
+    <section class="card section-card section-{{ s.kind }}">
+      <div class="section-head">
+        <h2>{{ s.label }}</h2>
+        <div class="section-meta muted small">
+          <span class="flag flag-{{ s.id }}">{{ s.sheet }}</span>
+          {% if s.stats and s.stats.comps is defined %}<span>{{ s.stats.comps }} comps</span>{% endif %}
+          {% if s.stats and s.stats.records is defined %}<span>{{ s.stats.records }} record{{ '' if s.stats.records == 1 else 's' }}</span>{% endif %}
+          {% if s.stats and s.stats.date_min %}<span>{{ s.stats.date_min[:7] }} → {{ s.stats.date_max[:7] }}</span>{% endif %}
+        </div>
+      </div>
+
+      {% if s.qc_counts %}
+      <div class="section-flags">
+        {% for k, v in s.qc_counts.items() %}<span class="flag flag-warn">{{ v }} {{ k }}</span>{% endfor %}
+      </div>
+      {% endif %}
+
+      {% if s.adjustment_columns %}
+      <p class="muted small">
+        Adjustment columns: {% for c in s.adjustment_columns %}<code>{{ c }}</code>{% if not loop.last %} · {% endif %}{% endfor %}
+      </p>
+      {% endif %}
+
+      {# ---- subject: read down the columns, not across ---- #}
+      {% if s.kind == 'subject' %}
+        {% if s.rows %}
+        <div class="kv-grid">
+          {% for h in s.headers %}
+            {% if h.strip() %}
+            <div class="kv-row">
+              <div class="kv-key">{{ h }}</div>
+              <div class="kv-val">{{ s.rows[0][loop.index0] if s.rows[0][loop.index0] is not none else '—' }}</div>
+            </div>
+            {% endif %}
+          {% endfor %}
+        </div>
+        {% endif %}
+
+      {# ---- everything else: a table, with the adjustment columns marked ---- #}
+      {% else %}
+        {% if s.rows %}
+        <div class="table-scroll">
+          <table class="comps content-table">
+            <thead>
+              <tr>
+                {% for h in s.headers %}
+                  {% if h.strip() %}
+                  <th class="{% if h in s.adjustment_columns %}col-adj{% endif %}">{{ h }}</th>
+                  {% endif %}
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for r in s.rows %}
+              <tr class="comp-row">
+                {% for h in s.headers %}
+                  {% if h.strip() %}
+                  <td class="{% if h in s.adjustment_columns %}col-adj{% endif %}">{{ r[loop.index0] if r[loop.index0] is not none else '' }}</td>
+                  {% endif %}
+                {% endfor %}
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="muted small">This section has a header but no rows.</p>
+        {% endif %}
+      {% endif %}
+
+      {% if s.notes %}
+      <ul class="muted small">{% for n in s.notes %}<li>{{ n }}</li>{% endfor %}</ul>
+      {% endif %}
+    </section>
+    {% endfor %}
+
+    {# ---- fallback: a workbook that did not split into sections ---- #}
+    {% if not parsed.sections and parsed.headers %}
     <section class="card">
       <h2>Content</h2>
-      <p class="muted">
-        {% if parsed.total_rows > shown_rows %}
-          Showing the first {{ shown_rows }} of {{ parsed.total_rows }} rows.
-        {% else %}
-          All {{ parsed.total_rows }} rows.
-        {% endif %}
-      </p>
       <div class="table-scroll">
         <table class="comps content-table">
-          <thead>
-            <tr>
-              {% for h in parsed.headers %}<th>{{ h }}</th>{% endfor %}
-            </tr>
-          </thead>
+          <thead><tr>{% for h in parsed.headers %}<th>{{ h }}</th>{% endfor %}</tr></thead>
           <tbody>
             {% for r in parsed.rows[:shown_rows] %}
-            <tr class="comp-row">
-              {% for h in parsed.headers %}
-              <td>{{ r.get(h) }}</td>
-              {% endfor %}
-            </tr>
+            <tr class="comp-row">{% for h in parsed.headers %}<td>{{ r.get(h) }}</td>{% endfor %}</tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
     </section>
+    {% endif %}
 
     {% if parsed.sheets and parsed.sheets|length > 1 %}
     <section class="card">
-      <h2>Other sheets</h2>
-      <p class="muted">This workbook has {{ parsed.sheets|length }} sheets; the first one with data is shown above.</p>
-      <p>{% for s in parsed.sheets %}<span class="flag {{ 'flag-ok' if s == parsed.sheet_name else 'flag-generic' }}">{{ s }}</span> {% endfor %}</p>
+      <h2>Sheets</h2>
+      <p class="muted">This workbook has {{ parsed.sheets|length }} sheets.</p>
+      <p>{% for s in parsed.sheets %}<span class="flag flag-generic">{{ s }}</span> {% endfor %}</p>
     </section>
     {% endif %}
     {% endif %}

@@ -162,8 +162,13 @@ def _comps_for_module(ranked: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def index(request: Request) -> HTMLResponse:
     """BMA Factory work console — dashboard for daily valuation work."""
     folder_ids, whole_drive = _scan_setting(request)
-    active_cases  = get_active_cases(folder_ids, whole_drive)
-    history_cases = get_history_cases(folder_ids, whole_drive)
+    # List Drive once and reuse it. get_active_cases and get_history_cases
+    # would each list Drive on their own, and listing Drive is the
+    # slowest thing this app does.
+    from demo.cases import get_drive_cases
+    drive_cases = get_drive_cases(folder_ids, whole_drive)
+    active_cases  = get_active_cases(folder_ids, whole_drive, drive_cases)
+    history_cases = get_history_cases(folder_ids, whole_drive, drive_cases)
     auth = {"signed_in": False, "user": None, "configured": True}
     try:
         from demo.oauth import get_user_info, is_configured
@@ -383,7 +388,7 @@ def drive_organise() -> JSONResponse:
 
 @app.get("/content/{file_id}", response_class=HTMLResponse)
 def content_page(request: Request, file_id: str) -> HTMLResponse:
-    """The content of one workbook."""
+    """The content of one workbook, section by section."""
     from demo import intake
 
     auth = _auth_state()
@@ -391,6 +396,15 @@ def content_page(request: Request, file_id: str) -> HTMLResponse:
     if f is None:
         raise HTTPException(status_code=404, detail="file not found in the intake folders")
     parsed = intake.parse_drive_file(f)
+    # Prefer the section that carries the adopted comparables over the
+    # raw extract — the adjustments beside them are the better evidence.
+    project = None
+    for s in parsed.sections:
+        if s.get("kind") == "comps" and s.get("project"):
+            project = s["project"]
+            break
+    if project is None:
+        project = parsed.project
     return templates.TemplateResponse(
         request,
         "content.html",
@@ -398,6 +412,7 @@ def content_page(request: Request, file_id: str) -> HTMLResponse:
             "auth": auth,
             "file": f.to_dict(),
             "parsed": parsed.to_dict(),
+            "project": project,
             "shown_rows": 200,
         },
     )

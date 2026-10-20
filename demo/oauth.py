@@ -68,6 +68,10 @@ _profile_cache: Optional[dict] = None
 _profile_fetched_at: float = 0.0
 _profile_loaded = False
 
+#: Scopes on the stored token — memoised, see ``granted_scopes``.
+_scopes_cache: list[str] = []
+_scopes_cached = False
+
 CLIENT_ID     = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
 CLIENT_SECRET = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
 # The redirect URI is set at deploy time so it matches the live URL exactly.
@@ -570,6 +574,8 @@ def read_auth_context(value: str) -> Optional[dict]:
 
 def save_credentials(creds: Credentials) -> None:
     """Persist the credentials durably: GCS, then Secret Manager, then /tmp."""
+    global _scopes_cache, _scopes_cached
+    _scopes_cache, _scopes_cached = [], False
     blob = creds.to_json()
     # Always keep a local copy — it lets this instance use the token straight
     # away without a round trip, and survives a remote-store blip.
@@ -614,6 +620,9 @@ def load_credentials() -> Optional[Credentials]:
 
 def clear_credentials() -> None:
     """Sign out — drop the local copy and delete the durable copies."""
+    global _scopes_cache, _scopes_cached, _profile_cache, _profile_loaded
+    _scopes_cache, _scopes_cached = [], False
+    _profile_cache, _profile_loaded = None, False
     if TOKEN_FILE.exists():
         TOKEN_FILE.unlink()
     if TOKEN_BUCKET:
@@ -667,13 +676,21 @@ def granted_scopes() -> list[str]:
     files the valuer put there himself" — the two look identical from
     the outside, and the second one is a permissions problem, not a data
     problem.
+
+    Memoised: the token's scopes do not change while it is stored, and
+    this was being read from Cloud Storage once per call.
     """
+    global _scopes_cache, _scopes_cached
+    if _scopes_cached:
+        return _scopes_cache
     try:
         blob = _gcs_read()
         if not blob:
             return []
         info = json.loads(blob)
-        return list(info.get("scopes") or [])
+        _scopes_cache = list(info.get("scopes") or [])
+        _scopes_cached = True
+        return _scopes_cache
     except Exception:  # noqa: BLE001
         return []
 

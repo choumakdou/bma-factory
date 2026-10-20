@@ -212,11 +212,19 @@ def _make_drive_loader(f: Any, parsed: Any) -> Callable[[], CaseData]:
 def get_all_cases(
     extra_folder_ids: tuple[str, ...] = (),
     whole_drive: bool = False,
+    drive_cases: Optional[list[Case]] = None,
 ) -> list[Case]:
-    """Every case — static registry plus Drive-derived projects."""
+    """Every case — static registry plus Drive-derived projects.
+
+    ``drive_cases`` lets the caller pass the Drive-derived list in, so a
+    page that needs both the active and the history list does not list
+    Drive twice. Listing Drive is the slowest thing the app does.
+    """
     static = list(CASES)
     drive_ids = {c.id for c in static}
-    for c in get_drive_cases(extra_folder_ids, whole_drive):
+    if drive_cases is None:
+        drive_cases = get_drive_cases(extra_folder_ids, whole_drive)
+    for c in drive_cases:
         if c.id not in drive_ids:
             static.append(c)
     return static
@@ -225,18 +233,20 @@ def get_all_cases(
 def get_active_cases(
     extra_folder_ids: tuple[str, ...] = (),
     whole_drive: bool = False,
+    drive_cases: Optional[list[Case]] = None,
 ) -> list[Case]:
     """Cases that are in progress or recently valued — the things on your desk."""
-    return [c for c in get_all_cases(extra_folder_ids, whole_drive)
+    return [c for c in get_all_cases(extra_folder_ids, whole_drive, drive_cases)
             if c.status in ("active", "in_progress")]
 
 
 def get_history_cases(
     extra_folder_ids: tuple[str, ...] = (),
     whole_drive: bool = False,
+    drive_cases: Optional[list[Case]] = None,
 ) -> list[Case]:
     """Cases that are completed and kept for reference."""
-    return [c for c in get_all_cases(extra_folder_ids, whole_drive)
+    return [c for c in get_all_cases(extra_folder_ids, whole_drive, drive_cases)
             if c.status == "completed"]
 
 

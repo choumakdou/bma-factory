@@ -29,6 +29,7 @@ import json
 import logging
 import re
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from typing import Any, Callable, Optional
@@ -87,6 +88,11 @@ class ParsedWorkbook:
     project: Optional[dict[str, Any]] = None
     notes: list[str] = field(default_factory=list)
     error: Optional[str] = None
+    #: The workbook split into recognised blocks. Each is rendered in its
+    #: own way: a subject record reads as key/value pairs, comparables
+    #: with an adjustment ladder get the adjustment columns marked, the
+    #: raw extract gets the QC flags.
+    sections: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -103,6 +109,7 @@ class ParsedWorkbook:
             "project": self.project,
             "notes": self.notes,
             "error": self.error,
+            "sections": self.sections,
         }
 
     @classmethod
@@ -121,6 +128,7 @@ class ParsedWorkbook:
             project=d.get("project"),
             notes=d.get("notes", []),
             error=d.get("error"),
+            sections=d.get("sections", []),
         )
 
 
@@ -512,6 +520,29 @@ def detect_format(headers: list[str]) -> FormatSpec:
     return FORMATS[-1]
 
 
+def _extract_sections(wb: Any, sheet_names: list[str]) -> list[dict[str, Any]]:
+    """Every sheet in the workbook, split into recognised blocks."""
+    from demo import sections as S
+
+    out: list[dict[str, Any]] = []
+    for name in sheet_names:
+        try:
+            ws = wb[name]
+            rows = [list(r) for r in ws.iter_rows(values_only=True)]
+        except Exception as e:  # noqa: BLE001
+            out.append({
+                "id": "table", "label": name, "kind": "table",
+                "sheet": name, "header_row": 0, "headers": [], "rows": [],
+                "notes": [f"could not read this sheet: {e}"],
+                "stats": {}, "qc_counts": {}, "project": None,
+                "adjustment_columns": [],
+            })
+            continue
+        for section in S.sections_from_sheet(name, rows):
+            out.append(section.to_dict())
+    return out
+
+
 def parse_workbook_bytes(data: bytes) -> ParsedWorkbook:
     """Bytes of an .xlsx/.xlsm -> ParsedWorkbook.
 
@@ -533,6 +564,7 @@ def parse_workbook_bytes(data: bytes) -> ParsedWorkbook:
         spec = detect_format(headers)
         parsed = spec.parse(sheet_name, headers, rows)
         parsed.sheets = sheet_names
+        parsed.sections = _extract_sections(wb, sheet_names)
         return parsed
     except Exception as e:  # noqa: BLE001
         return ParsedWorkbook(
@@ -580,17 +612,31 @@ def _drive():
     return get_drive()
 
 
-def list_drive_folders() -> list[dict[str, str]]:
+_FOLDER_LIST_OBJECT = "bma-factory/drive/folder-list.json"
+_FOLDER_LIST_TTL = 900          # 15 minutes
+_folder_list_cache: list[dict[str, str]] = []
+_folder_list_at: float = 0.0
+_folder_list_lock = threading.Lock()
+
+
+def list_drive_folders(force: bool = False) -> list[dict[str, str]]:
     """Every folder in the valuer's Drive, for the folder picker.
 
-    Cheap enough to call on page load — one files.list against the
-    folder mime type. Returns [] if not signed in.
+    Cached in Cloud Storage for fifteen minutes. The query is a heavy
+    one — every folder in a personal Drive — and the list barely moves,
+    so re-running it on every page render is pure latency.
     """
+    global _folder_list_cache, _folder_list_at
+    now = time.time()
+    if not force and _folder_list_cache and now - _folder_list_at < _FOLDER_LIST_TTL:
+        return _folder_list_cache
+
     try:
         drive = _drive()
     except Exception as e:  # noqa: BLE001
         log.info("not signed in, cannot list Drive folders: %s", e)
-        return []
+        return _folder_list_cache
+
     try:
         r = drive.files().list(
             q="mimeType='application/vnd.google-apps.folder' and trashed=false",
@@ -601,8 +647,40 @@ def list_drive_folders() -> list[dict[str, str]]:
         ).execute()
     except Exception as e:  # noqa: BLE001
         log.warning("cannot list Drive folders: %s", e)
-        return []
-    return [{"id": f["id"], "name": f["name"]} for f in r.get("files", [])]
+        return _folder_list_cache
+
+    folders = [{"id": f["id"], "name": f["name"]} for f in r.get("files", [])]
+    with _folder_list_lock:
+        _folder_list_cache = folders
+        _folder_list_at = now
+    try:
+        from demo.oauth import _gcs_write_to
+        _gcs_write_to(json.dumps({"at": now, "folders": folders}),
+                      _FOLDER_LIST_OBJECT)
+    except Exception:  # noqa: BLE001
+        pass
+    return folders
+
+
+def _load_folder_list_cache() -> None:
+    """Warm the folder list from Cloud Storage on a cold start."""
+    global _folder_list_cache, _folder_list_at
+    if _folder_list_cache:
+        return
+    try:
+        from demo.oauth import _gcs_read_from
+        blob = _gcs_read_from(_FOLDER_LIST_OBJECT)
+        if not blob:
+            return
+        data = json.loads(blob)
+        at = float(data.get("at", 0) or 0)
+        folders = data.get("folders")
+        if isinstance(folders, list) and time.time() - at < _FOLDER_LIST_TTL:
+            _folder_list_cache = folders
+            _folder_list_at = at
+            log.info("loaded %d Drive folders from cache", len(folders))
+    except Exception as e:  # noqa: BLE001
+        log.warning("could not load the Drive folder list cache: %s", e)
 
 
 def list_drive_workbooks(
@@ -625,6 +703,7 @@ def list_drive_workbooks(
         log.info("not signed in, cannot list Drive: %s", e)
         return []
 
+    _load_folder_list_cache()
     out: list[DriveFile] = []
     targets: list[tuple[str, str]] = []   # (label, folder id)
 
@@ -874,20 +953,40 @@ def subject_to_relevance(subject: Any) -> dict[str, Any]:
 
 
 def build_case_data(parsed: ParsedWorkbook) -> Optional[tuple[dict[str, Any], list[dict[str, Any]]]]:
-    """(subject, comps) for the relevancy engine, from a parsed extract.
+    """(subject, comps) for the relevancy engine, from a parsed workbook.
+
+    Prefers the section holding the comparables with their adjustment
+    ladder — Bobby's own working evidence — and falls back to the raw
+    Memfus Wong extract.
 
     None when the workbook carries no subject row.
     """
     from ingest import memfus
 
-    if parsed.format_id != "memfus-mw" or not parsed.project:
+    # Which block holds the comparables, and which is the raw extract.
+    comps_section = None
+    extract_section = None
+    for s in parsed.sections:
+        if s.get("kind") == "comps" and comps_section is None:
+            comps_section = s
+        elif s.get("kind") == "extract" and extract_section is None:
+            extract_section = s
+    if comps_section is None and extract_section is None:
+        if parsed.format_id != "memfus-mw" or not parsed.project:
+            return None
+        comps_section = {
+            "headers": parsed.headers,
+            "rows": [[d.get(h) for h in parsed.headers] for d in parsed.rows],
+            "header_row": 1,
+        }
+    source = comps_section or extract_section or {}
+
+    headers = source.get("headers") or []
+    rows = source.get("rows") or []
+    if not headers:
         return None
-    # Re-derive the comps from the raw rows so the loader has the full
-    # Memfus Wong objects, not just the display preview.
-    dicts = _rows_as_dicts(parsed.headers, [
-        [d.get(h) for h in parsed.headers] for d in parsed.rows
-    ])
-    comps = memfus.from_rows(dicts, first_row=2)
+    dicts = _rows_as_dicts(headers, rows)
+    comps = memfus.from_rows(dicts, first_row=(source.get("header_row", 1) or 1) + 1)
     subject, evidence = memfus.split_subject(comps)
     if subject is None:
         return None

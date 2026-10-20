@@ -118,3 +118,90 @@ def build_workbook_path(path) -> Any:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_bytes(build_workbook_bytes())
     return p
+
+
+# ---------------------------------------------------------------------------
+# A working file with sections, the shape Bobby's grid actually has
+# ---------------------------------------------------------------------------
+
+#: The adjustment ladder, in the order it runs down the sheet.
+ADJUSTMENT_COLUMNS = [
+    "TIME ADJ %", "FLOOR ADJ %", "LOC ADJ %", "SW ADJ %", "QA ADJ %",
+    "TOTAL ADJ %", "ADOPTED PSF (SF)", "ADOPTED RENT (HK$)",
+]
+
+#: The subject record — a property described down the columns, not across.
+SUBJECT_FIELDS = [
+    "SUBJECT", "ADDRESS", "DISTRICT", "LOT", "USAGE", "NFA (SF)",
+    "GFA (SF)", "ADOPTED VALUE (HK$)", "VALUATION DATE", "VALUER",
+]
+
+
+def build_working_file_bytes() -> bytes:
+    """A three-sheet workbook: subject, comps with adjustments, raw extract.
+
+    This is the shape of a real working file rather than a flat
+    agency extract, and it is what the section detection is for.
+    """
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+
+    # --- Sheet 1: the subject record --------------------------------
+    ws = wb.active
+    ws.title = "Subject"
+    ws.append(SUBJECT_FIELDS)
+    ws.append([
+        "Island Place Tower",
+        "510 King's Road, Hong Kong",
+        "HNP",
+        "1001",
+        "Office",
+        13_812,
+        16_000,
+        76_000_000,
+        "2026-08-20",
+        "BMA",
+    ])
+
+    # --- Sheet 2: comparables with the adjustment ladder -------------
+    ws2 = wb.create_sheet("Comps")
+    headers = list(COLUMNS) + ADJUSTMENT_COLUMNS
+    ws2.append(headers)
+    for i, r in enumerate(sample_rows()):
+        base = [r.get(c) for c in COLUMNS]
+        # A plausible adjustment ladder: time, floor, location, QA.
+        time_adj = [-3.0, -6.5, -9.0, -2.0][i % 4] if i else 0.0
+        floor_adj = [0.0, -2.0, -4.0][i % 3]
+        loc_adj = [0.0, -1.5][i % 2]
+        sw_adj = -1.0 if i % 3 == 0 else 0.0
+        qa_adj = -2.0 if i % 4 == 3 else 0.0
+        total = time_adj + floor_adj + loc_adj + sw_adj + qa_adj
+        nfa = float(str(r.get("TOTNFA") or 0).replace(",", ""))
+        consid = float(str(r.get("CONSIDERTN") or 0).replace(",", "")) * 1_000_000
+        psf = round(consid / nfa, 2) if nfa else 0
+        adopted = round(psf * (1 + total / 100), 2)
+        ws2.append(base + [
+            time_adj, floor_adj, loc_adj, sw_adj, qa_adj, total,
+            adopted, round(adopted * nfa, 0),
+        ])
+
+    # --- Sheet 3: the raw Memfus Wong extract -----------------------
+    ws3 = wb.create_sheet("MW Extract")
+    ws3.append(COLUMNS)
+    for r in sample_rows():
+        ws3.append([r.get(c) for c in COLUMNS])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def build_working_file_path(path) -> Any:
+    """Write the multi-section working file to ``path``."""
+    from pathlib import Path
+
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(build_working_file_bytes())
+    return p
