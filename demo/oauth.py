@@ -121,12 +121,52 @@ def _secret_read() -> Optional[str]:
         return None
 
 
+def _secret_ensure() -> bool:
+    """Create the secret if it does not exist yet. True if it exists after."""
+    if not SECRET_NAME:
+        return False
+    token = _sa_access_token()
+    if not token:
+        return False
+    import urllib.request
+    url = f"{_SECRET_API}/{PROJECT_ID}/secrets/{SECRET_NAME}"
+    # Does it already exist?
+    req = urllib.request.Request(
+        url, headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            r.read()
+        return True
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            return False
+    # Create it.
+    body = json.dumps({"replication": {"automatic": {}}}).encode("utf-8")
+    req = urllib.request.Request(
+        url, method="POST", data=body,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            r.read()
+        log.info("created Secret Manager secret %s", SECRET_NAME)
+        return True
+    except urllib.error.HTTPError as e:
+        log.warning("could not create secret %s: %s %s", SECRET_NAME, e.code, e.reason)
+        return False
+    except Exception as e:  # noqa: BLE001
+        log.warning("could not create secret %s: %s", SECRET_NAME, e)
+        return False
+
+
 def _secret_write(blob: str) -> bool:
     """Write the token JSON to Secret Manager as a new version."""
     if not SECRET_NAME:
         return False
     token = _sa_access_token()
     if not token:
+        return False
+    if not _secret_ensure():
         return False
     import base64
     import json as _json
@@ -150,6 +190,39 @@ def _secret_write(blob: str) -> bool:
     except Exception as e:  # noqa: BLE001
         log.warning("Secret Manager write failed: %s", e)
         return False
+
+
+def secret_store_status() -> dict:
+    """Diagnostic: what can the app do with Secret Manager right now?"""
+    out: dict = {
+        "secret_name": SECRET_NAME or None,
+        "project": PROJECT_ID,
+        "sa_credentials_present": bool(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")),
+    }
+    tok = _sa_access_token()
+    out["sa_access_token"] = bool(tok)
+    if not tok or not SECRET_NAME:
+        out["ok"] = False
+        out["reason"] = "no service-account identity or no secret name configured"
+        return out
+    import urllib.request
+    url = f"{_SECRET_API}/{PROJECT_ID}/secrets/{SECRET_NAME}"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {tok}"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            r.read()
+        out["secret_exists"] = True
+        out["can_read_secret_meta"] = True
+    except urllib.error.HTTPError as e:
+        out["secret_exists"] = e.code != 404
+        out["can_read_secret_meta"] = e.code != 403
+        if e.code == 403:
+            out["reason"] = "no permission on Secret Manager"
+    except Exception as e:  # noqa: BLE001
+        out["reason"] = str(e)
+    out["can_write"] = _secret_write(json.dumps({"probe": True}))
+    out["ok"] = bool(out.get("can_write"))
+    return out
 
 
 def get_flow(code_verifier: Optional[str] = None) -> "Flow":  # type: ignore

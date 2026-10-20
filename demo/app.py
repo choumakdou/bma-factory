@@ -442,6 +442,13 @@ def auth_status() -> dict[str, Any]:
     }
 
 
+@app.get("/diag/secrets", include_in_schema=False)
+def diag_secrets() -> JSONResponse:
+    """Report what the app can do with Secret Manager (token durability)."""
+    from demo.oauth import secret_store_status
+    return JSONResponse(secret_store_status())
+
+
 @app.post("/auth/signout")
 def auth_signout() -> dict[str, str]:
     from demo.oauth import clear_credentials
