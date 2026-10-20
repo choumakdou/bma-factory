@@ -110,7 +110,11 @@ CASES: list[Case] = [
 ]
 
 
-def get_case(case_id: str) -> Optional[Case]:
+def get_case(
+    case_id: str,
+    extra_folder_ids: tuple[str, ...] = (),
+    whole_drive: bool = False,
+) -> Optional[Case]:
     """Look up a case by its URL slug.
 
     Static registry first, then projects derived from workbooks in Drive.
@@ -118,13 +122,16 @@ def get_case(case_id: str) -> Optional[Case]:
     for c in CASES:
         if c.id == case_id:
             return c
-    for c in get_drive_cases():
+    for c in get_drive_cases(extra_folder_ids, whole_drive):
         if c.id == case_id:
             return c
     return None
 
 
-def get_drive_cases() -> list[Case]:
+def get_drive_cases(
+    extra_folder_ids: tuple[str, ...] = (),
+    whole_drive: bool = False,
+) -> list[Case]:
     """Projects derived from Excel files sitting in the Drive intake folders.
 
     A Memfus Wong extract carries its own subject row, so dropping one in
@@ -138,7 +145,9 @@ def get_drive_cases() -> list[Case]:
     except Exception:  # noqa: BLE001
         return []
     try:
-        files = intake.list_drive_workbooks()
+        files = intake.list_drive_workbooks(
+            folder_ids=extra_folder_ids, whole_drive=whole_drive
+        )
     except Exception:  # noqa: BLE001
         return []
 
@@ -200,34 +209,48 @@ def _make_drive_loader(f: Any, parsed: Any) -> Callable[[], CaseData]:
     return loader
 
 
-def get_all_cases() -> list[Case]:
+def get_all_cases(
+    extra_folder_ids: tuple[str, ...] = (),
+    whole_drive: bool = False,
+) -> list[Case]:
     """Every case — static registry plus Drive-derived projects."""
     static = list(CASES)
     drive_ids = {c.id for c in static}
-    for c in get_drive_cases():
+    for c in get_drive_cases(extra_folder_ids, whole_drive):
         if c.id not in drive_ids:
             static.append(c)
     return static
 
 
-def get_active_cases() -> list[Case]:
+def get_active_cases(
+    extra_folder_ids: tuple[str, ...] = (),
+    whole_drive: bool = False,
+) -> list[Case]:
     """Cases that are in progress or recently valued — the things on your desk."""
-    return [c for c in get_all_cases() if c.status in ("active", "in_progress")]
+    return [c for c in get_all_cases(extra_folder_ids, whole_drive)
+            if c.status in ("active", "in_progress")]
 
 
-def get_history_cases() -> list[Case]:
+def get_history_cases(
+    extra_folder_ids: tuple[str, ...] = (),
+    whole_drive: bool = False,
+) -> list[Case]:
     """Cases that are completed and kept for reference."""
-    return [c for c in get_all_cases() if c.status == "completed"]
+    return [c for c in get_all_cases(extra_folder_ids, whole_drive)
+            if c.status == "completed"]
 
 
-def get_cases_by_category() -> list[tuple[str, list[Case]]]:
+def get_cases_by_category(
+    extra_folder_ids: tuple[str, ...] = (),
+    whole_drive: bool = False,
+) -> list[tuple[str, list[Case]]]:
     """Return categories with their cases, in display order.
 
     Categories with no cases are still returned (so the index page can
     show empty-state placeholders), but only if they're in CATEGORY_ORDER.
     """
     by_cat: dict[str, list[Case]] = {}
-    for c in get_all_cases():
+    for c in get_all_cases(extra_folder_ids, whole_drive):
         by_cat.setdefault(c.category, []).append(c)
 
     out: list[tuple[str, list[Case]]] = []

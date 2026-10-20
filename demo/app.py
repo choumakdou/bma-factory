@@ -161,8 +161,9 @@ def _comps_for_module(ranked: list[dict[str, Any]]) -> list[dict[str, Any]]:
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
     """BMA Factory work console — dashboard for daily valuation work."""
-    active_cases  = get_active_cases()
-    history_cases = get_history_cases()
+    folder_ids, whole_drive = _scan_setting(request)
+    active_cases  = get_active_cases(folder_ids, whole_drive)
+    history_cases = get_history_cases(folder_ids, whole_drive)
     auth = {"signed_in": False, "user": None, "configured": True}
     try:
         from demo.oauth import get_user_info, is_configured
@@ -186,7 +187,8 @@ def index(request: Request) -> HTMLResponse:
 @app.get("/case/{case_id}", response_class=HTMLResponse)
 def case_review(request: Request, case_id: str) -> HTMLResponse:
     """Per-case review — ranked comps, QC flags, Generate button."""
-    case = get_case(case_id)
+    folder_ids, whole_drive = _scan_setting(request)
+    case = get_case(case_id, folder_ids, whole_drive)
     if case is None:
         raise HTTPException(status_code=404, detail=f"case '{case_id}' not found")
     case_data = _load_case(case)
@@ -253,13 +255,26 @@ def _auth_state() -> dict[str, Any]:
     return state
 
 
-def _intake_rows() -> list[dict[str, Any]]:
+def _scan_setting(request: Request | None) -> tuple[tuple[str, ...], bool]:
+    """Which extra folders the valuer is pointing the app at."""
+    from demo import intake
+    if request is None:
+        return (), False
+    return intake.parse_scan_setting(request.cookies.get(intake.SCAN_COOKIE))
+
+
+def _intake_rows(
+    extra_folder_ids: tuple[str, ...] = (),
+    whole_drive: bool = False,
+) -> list[dict[str, Any]]:
     """The intake listing, one row per Drive workbook."""
     from demo import intake
 
     rows: list[dict[str, Any]] = []
     try:
-        files = intake.list_drive_workbooks()
+        files = intake.list_drive_workbooks(
+            folder_ids=extra_folder_ids, whole_drive=whole_drive
+        )
     except Exception as e:  # noqa: BLE001
         log.warning("intake listing failed: %s", e)
         return rows
@@ -285,10 +300,12 @@ def _intake_rows() -> list[dict[str, Any]]:
 @app.get("/intake", response_class=HTMLResponse)
 def intake_page(request: Request) -> HTMLResponse:
     """The content page — Excel files from Drive, parsed and listed."""
+    from demo import intake
     from demo.oauth import can_read_all_drive, granted_scopes
 
     auth = _auth_state()
-    rows = _intake_rows() if auth["signed_in"] else []
+    folder_ids, whole_drive = _scan_setting(request)
+    rows = _intake_rows(folder_ids, whole_drive) if auth["signed_in"] else []
     # A sign-in that only holds `drive.file` cannot see files the valuer
     # put in Drive himself. Say so, rather than showing an empty list that
     # looks like the app is broken.
@@ -302,8 +319,46 @@ def intake_page(request: Request) -> HTMLResponse:
             "upload_error": None,
             "limited_scope": limited,
             "granted_scopes": granted_scopes(),
+            "folders": intake.list_drive_folders() if auth["signed_in"] else [],
+            "scan_folders": folder_ids,
+            "scan_whole_drive": whole_drive,
         },
     )
+
+
+@app.post("/intake/scan")
+async def set_scan(request: Request):
+    """Choose which Drive folders the app reads.
+
+    Keeps the console and the content page looking at the same place, so
+    a project that appears in one appears in the other.
+    """
+    from demo import intake
+
+    form = await request.form()
+    choice = (form.get("folders") or "")
+    if isinstance(choice, list):
+        choice = choice[0] if choice else ""
+    choice = str(choice).strip()
+
+    if choice == "all":
+        value = "all"
+    elif choice == "default":
+        value = ""
+    else:
+        value = ",".join(
+            x for x in (part.strip() for part in choice.split(",")) if x
+        )
+
+    response = RedirectResponse("/intake", status_code=303)
+    if value:
+        response.set_cookie(
+            intake.SCAN_COOKIE, value, max_age=60 * 60 * 24 * 90,
+            httponly=True, samesite="lax",
+        )
+    else:
+        response.delete_cookie(intake.SCAN_COOKIE)
+    return response
 
 
 @app.get("/content/{file_id}", response_class=HTMLResponse)
@@ -375,17 +430,22 @@ async def upload(request: Request):
 
 
 @app.get("/api/intake", include_in_schema=False)
-def api_intake() -> dict[str, Any]:
+def api_intake(request: Request) -> dict[str, Any]:
     """JSON view of the intake listing (for agents / MCP)."""
     from demo.oauth import can_read_all_drive, granted_scopes
 
+    from demo import intake
+
     auth = _auth_state()
+    folder_ids, whole_drive = _scan_setting(request)
     return {
         "signed_in": auth["signed_in"],
         "user": auth["user"],
         "can_read_all_drive": can_read_all_drive(),
         "granted_scopes": granted_scopes(),
-        "files": _intake_rows() if auth["signed_in"] else [],
+        "scan_folders": list(folder_ids),
+        "scan_whole_drive": whole_drive,
+        "files": _intake_rows(folder_ids, whole_drive) if auth["signed_in"] else [],
     }
 
 

@@ -579,8 +579,43 @@ def _drive():
     return get_drive()
 
 
-def list_drive_workbooks(folders: tuple[str, ...] = INTAKE_FOLDERS) -> list[DriveFile]:
-    """List Excel files in the intake folders. Empty list if not signed in."""
+def list_drive_folders() -> list[dict[str, str]]:
+    """Every folder in the valuer's Drive, for the folder picker.
+
+    Cheap enough to call on page load — one files.list against the
+    folder mime type. Returns [] if not signed in.
+    """
+    try:
+        drive = _drive()
+    except Exception as e:  # noqa: BLE001
+        log.info("not signed in, cannot list Drive folders: %s", e)
+        return []
+    try:
+        r = drive.files().list(
+            q="mimeType='application/vnd.google-apps.folder' and trashed=false",
+            fields="files(id,name)",
+            pageSize=200,
+            orderBy="name",
+            supportsAllDrives=True,
+        ).execute()
+    except Exception as e:  # noqa: BLE001
+        log.warning("cannot list Drive folders: %s", e)
+        return []
+    return [{"id": f["id"], "name": f["name"]} for f in r.get("files", [])]
+
+
+def list_drive_workbooks(
+    folders: tuple[str, ...] = INTAKE_FOLDERS,
+    folder_ids: tuple[str, ...] = (),
+    whole_drive: bool = False,
+) -> list[DriveFile]:
+    """List Excel files in the intake folders. Empty list if not signed in.
+
+    ``folder_ids`` points at folders by Drive id, so the valuer can aim
+    the app at wherever they actually put the file instead of guessing.
+    ``whole_drive`` scans everything, which is the fallback for a file
+    that went into the Drive root rather than a named folder.
+    """
     from demo.drive import _find_or_create_folder
 
     try:
@@ -590,15 +625,26 @@ def list_drive_workbooks(folders: tuple[str, ...] = INTAKE_FOLDERS) -> list[Driv
         return []
 
     out: list[DriveFile] = []
+    targets: list[tuple[str, str]] = []   # (label, folder id)
+
+    if whole_drive:
+        targets.append(("My Drive", "root"))
     for folder in folders:
         try:
-            folder_id = _find_or_create_folder(folder)
+            targets.append((folder, _find_or_create_folder(folder)))
         except Exception as e:  # noqa: BLE001
             log.warning("cannot resolve folder %s: %s", folder, e)
-            continue
+    for fid in folder_ids:
+        targets.append((fid, fid))
+
+    for label, folder_id in targets:
+        if folder_id == "root":
+            q = "trashed=false and 'root' in parents"
+        else:
+            q = f"'{folder_id}' in parents and trashed=false"
         try:
             r = drive.files().list(
-                q=f"'{folder_id}' in parents and trashed=false",
+                q=q,
                 fields=(
                     "files(id,name,size,modifiedTime,webViewLink,mimeType)"
                 ),
@@ -607,7 +653,7 @@ def list_drive_workbooks(folders: tuple[str, ...] = INTAKE_FOLDERS) -> list[Driv
                 supportsAllDrives=True,
             ).execute()
         except Exception as e:  # noqa: BLE001
-            log.warning("cannot list folder %s: %s", folder, e)
+            log.warning("cannot list folder %s: %s", label, e)
             continue
         for f in r.get("files", []):
             mime = f.get("mimeType", "")
@@ -617,7 +663,7 @@ def list_drive_workbooks(folders: tuple[str, ...] = INTAKE_FOLDERS) -> list[Driv
             out.append(DriveFile(
                 id=f["id"],
                 name=name,
-                folder=folder,
+                folder=label,
                 modified_time=f.get("modifiedTime", ""),
                 size=int(f.get("size", 0) or 0),
                 web_view_link=f.get("webViewLink", ""),
@@ -704,6 +750,30 @@ def find_file(file_id: str, folders: tuple[str, ...] = INTAKE_FOLDERS) -> Option
         if f.id == file_id:
             return f
     return None
+
+
+# --- the folder the valuer is aiming the app at -----------------------------
+
+#: Cookie holding the extra folders the valuer picked, or "all".
+SCAN_COOKIE = "bma_intake_scan"
+
+
+def parse_scan_setting(value: str | None) -> tuple[tuple[str, ...], bool]:
+    """Cookie value -> (extra folder ids, whole drive?).
+
+    ``all`` means scan the whole of Drive rather than named folders.
+    """
+    if not value:
+        return (), False
+    v = value.strip()
+    if v == "all":
+        return (), True
+    ids = tuple(x for x in (part.strip() for part in v.split(",")) if x)
+    return ids, False
+
+
+def scan_setting_cookie(folder_ids: tuple[str, ...], whole_drive: bool) -> str:
+    return "all" if whole_drive else ",".join(folder_ids)
 
 
 # ---------------------------------------------------------------------------

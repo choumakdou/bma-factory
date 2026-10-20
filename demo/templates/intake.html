@@ -82,10 +82,26 @@
     <section class="card">
       <h2>Workbooks</h2>
       <p class="muted">
-        Scanned in <code>/Intake/</code> and <code>/ORO/</code>. The parsed
-        content is cached in Cloud Storage, so this page does not re-read
-        the file on every visit.
+        Scanned in <code>/Intake/</code> and <code>/ORO/</code>
+        {% if scan_whole_drive %}plus <b>your whole Drive</b>{% endif %}
+        {% if scan_folders %}plus {{ scan_folders|length }} folder{{ '' if scan_folders|length == 1 else 's' }} you picked{% endif %}.
+        The parsed content is cached in Cloud Storage, so this page does not
+        re-read the file on every visit.
       </p>
+      <form method="post" action="/intake/scan" class="upload-form">
+        <select name="folders">
+          <option value="default" {% if not scan_folders and not scan_whole_drive %}selected{% endif %}>
+            /Intake/ and /ORO/ (default)
+          </option>
+          <option value="all" {% if scan_whole_drive %}selected{% endif %}>
+            My whole Drive
+          </option>
+          {% for f in folders %}
+          <option value="{{ f.id }}" {% if f.id in scan_folders %}selected{% endif %}>/{{ f.name }}/</option>
+          {% endfor %}
+        </select>
+        <button type="submit" class="gen-btn">Scan</button>
+      </form>
       {% if files %}
       <table class="comps">
         <thead>
@@ -130,11 +146,12 @@
       </table>
       {% else %}
       <div class="empty-state">
-        <p>No workbooks yet in <code>/Intake/</code> or <code>/ORO/</code>.</p>
+        <p>No workbooks found in the folders being scanned.</p>
         <p class="muted small">
-          Upload one above, or drop it straight into <code>/Intake/</code> in
-          Drive. A Memfus Wong extract with a row marked
-          <code>MEM_NO = "Subject"</code> becomes a project automatically.
+          Upload one above, or drop it into <code>/Intake/</code> in Drive. If
+          you put it somewhere else, pick that folder in the <b>Scan</b> control
+          above — or choose “My whole Drive”. A Memfus Wong extract with a row
+          marked <code>MEM_NO = "Subject"</code> becomes a project automatically.
         </p>
       </div>
       {% endif %}

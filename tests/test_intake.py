@@ -351,3 +351,54 @@ class TestScopeGuard(unittest.TestCase):
         self.assertIn(
             "https://www.googleapis.com/auth/drive.readonly", d["granted_scopes"]
         )
+
+
+class TestScanSetting(unittest.TestCase):
+    """Which folders the valuer is pointing the app at."""
+
+    def test_default_is_no_extra_folders(self):
+        from demo.intake import parse_scan_setting
+        self.assertEqual(parse_scan_setting(None), ((), False))
+        self.assertEqual(parse_scan_setting(""), ((), False))
+
+    def test_all_means_whole_drive(self):
+        from demo.intake import parse_scan_setting
+        self.assertEqual(parse_scan_setting("all"), ((), True))
+
+    def test_folder_ids_are_parsed(self):
+        from demo.intake import parse_scan_setting
+        self.assertEqual(parse_scan_setting("abc, def ,"), (("abc", "def"), False))
+
+    def test_cookie_round_trip(self):
+        from demo.intake import scan_setting_cookie
+        self.assertEqual(scan_setting_cookie(("a", "b"), False), "a,b")
+        self.assertEqual(scan_setting_cookie((), True), "all")
+        self.assertEqual(scan_setting_cookie((), False), "")
+
+    def test_scan_route_sets_the_cookie(self):
+        from unittest import mock
+        from fastapi.testclient import TestClient
+        from demo.app import app
+        client = TestClient(app, follow_redirects=False)
+        with mock.patch("demo.app._auth_state", return_value={
+                "signed_in": True, "configured": True, "user": {"email": "b@x.com"},
+            }), \
+             mock.patch("demo.intake.list_drive_folders", return_value=[]), \
+             mock.patch("demo.intake.list_drive_workbooks", return_value=[]):
+            r = client.post("/intake/scan", data={"folders": "all"})
+        self.assertEqual(r.status_code, 303)
+        self.assertIn("bma_intake_scan=all", r.headers.get("set-cookie", ""))
+
+    def test_scan_route_clears_the_cookie_for_default(self):
+        from unittest import mock
+        from fastapi.testclient import TestClient
+        from demo.app import app
+        client = TestClient(app, follow_redirects=False)
+        with mock.patch("demo.app._auth_state", return_value={
+                "signed_in": True, "configured": True, "user": {"email": "b@x.com"},
+            }), \
+             mock.patch("demo.intake.list_drive_folders", return_value=[]), \
+             mock.patch("demo.intake.list_drive_workbooks", return_value=[]):
+            r = client.post("/intake/scan", data={"folders": "default"})
+        self.assertEqual(r.status_code, 303)
+        self.assertIn("bma_intake_scan=", r.headers.get("set-cookie", ""))
