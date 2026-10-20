@@ -627,6 +627,7 @@ def list_drive_folders(force: bool = False) -> list[dict[str, str]]:
     so re-running it on every page render is pure latency.
     """
     global _folder_list_cache, _folder_list_at
+    _load_folder_list_cache()
     now = time.time()
     if not force and _folder_list_cache and now - _folder_list_at < _FOLDER_LIST_TTL:
         return _folder_list_cache
@@ -638,18 +639,31 @@ def list_drive_folders(force: bool = False) -> list[dict[str, str]]:
         return _folder_list_cache
 
     try:
-        r = drive.files().list(
-            q="mimeType='application/vnd.google-apps.folder' and trashed=false",
-            fields="files(id,name)",
-            pageSize=200,
-            orderBy="name",
-            supportsAllDrives=True,
-        ).execute()
+        # Paginate. Bobby's Drive has more folders than one page holds,
+        # and a truncated picker is worse than no picker — it looks
+        # complete and is not.
+        raw: list[dict[str, Any]] = []
+        page_token = None
+        for _ in range(20):          # 20 pages x 200 = 4000 folders
+            kwargs: dict[str, Any] = {
+                "q": "mimeType='application/vnd.google-apps.folder' and trashed=false",
+                "fields": "files(id,name,nextPageToken)",
+                "pageSize": 200,
+                "orderBy": "name",
+                "supportsAllDrives": True,
+            }
+            if page_token:
+                kwargs["pageToken"] = page_token
+            r = drive.files().list(**kwargs).execute()
+            raw.extend(r.get("files", []))
+            page_token = r.get("nextPageToken")
+            if not page_token:
+                break
     except Exception as e:  # noqa: BLE001
         log.warning("cannot list Drive folders: %s", e)
         return _folder_list_cache
 
-    folders = [{"id": f["id"], "name": f["name"]} for f in r.get("files", [])]
+    folders = [{"id": f["id"], "name": f["name"]} for f in raw]
     with _folder_list_lock:
         _folder_list_cache = folders
         _folder_list_at = now
@@ -663,24 +677,29 @@ def list_drive_folders(force: bool = False) -> list[dict[str, str]]:
 
 
 def _load_folder_list_cache() -> None:
-    """Warm the folder list from Cloud Storage on a cold start."""
+    """Warm the folder list from Cloud Storage on a cold start.
+
+    Locked: the file listing runs this on a worker thread while the
+    folder picker may call it on another.
+    """
     global _folder_list_cache, _folder_list_at
-    if _folder_list_cache:
-        return
-    try:
-        from demo.oauth import _gcs_read_from
-        blob = _gcs_read_from(_FOLDER_LIST_OBJECT)
-        if not blob:
+    with _folder_list_lock:
+        if _folder_list_cache:
             return
-        data = json.loads(blob)
-        at = float(data.get("at", 0) or 0)
-        folders = data.get("folders")
-        if isinstance(folders, list) and time.time() - at < _FOLDER_LIST_TTL:
-            _folder_list_cache = folders
-            _folder_list_at = at
-            log.info("loaded %d Drive folders from cache", len(folders))
-    except Exception as e:  # noqa: BLE001
-        log.warning("could not load the Drive folder list cache: %s", e)
+        try:
+            from demo.oauth import _gcs_read_from
+            blob = _gcs_read_from(_FOLDER_LIST_OBJECT)
+            if not blob:
+                return
+            data = json.loads(blob)
+            at = float(data.get("at", 0) or 0)
+            folders = data.get("folders")
+            if isinstance(folders, list) and time.time() - at < _FOLDER_LIST_TTL:
+                _folder_list_cache = folders
+                _folder_list_at = at
+                log.info("loaded %d Drive folders from cache", len(folders))
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not load the Drive folder list cache: %s", e)
 
 
 def list_drive_workbooks(
