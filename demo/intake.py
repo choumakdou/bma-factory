@@ -722,7 +722,8 @@ def list_drive_workbooks(
     for fid in folder_ids:
         targets.append((fid, fid))
 
-    for label, folder_id in targets:
+    def _list_one(label: str, folder_id: str) -> list[DriveFile]:
+        """One folder's Excel files."""
         if folder_id == "root":
             q = "trashed=false and 'root' in parents"
         else:
@@ -739,13 +740,14 @@ def list_drive_workbooks(
             ).execute()
         except Exception as e:  # noqa: BLE001
             log.warning("cannot list folder %s: %s", label, e)
-            continue
+            return []
+        found: list[DriveFile] = []
         for f in r.get("files", []):
             mime = f.get("mimeType", "")
             name = f.get("name", "")
             if mime not in EXCEL_MIME and not name.lower().endswith((".xlsx", ".xlsm", ".xls")):
                 continue
-            out.append(DriveFile(
+            found.append(DriveFile(
                 id=f["id"],
                 name=name,
                 folder=label,
@@ -754,6 +756,24 @@ def list_drive_workbooks(
                 web_view_link=f.get("webViewLink", ""),
                 mime_type=mime,
             ))
+        return found
+
+    # The folders are independent, so list them at the same time rather
+    # than one after the other. Each call is a round trip to Google and
+    # they add up directly to the page's load time.
+    if len(targets) > 1:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=len(targets)) as pool:
+            for found in pool.map(lambda t: _list_one(t[0], t[1]), targets):
+                out.extend(found)
+    else:
+        for label, folder_id in targets:
+            out.extend(_list_one(label, folder_id))
+    # Newest first across all folders, not per folder. A re-uploaded
+    # extract supersedes the older one for the same subject, and the
+    # project derivation relies on that order.
+    out.sort(key=lambda f: f.modified_time, reverse=True)
+    return out
     # Newest first across all folders, not per folder. A re-uploaded
     # extract supersedes the older one for the same subject, and the
     # project derivation relies on that order.

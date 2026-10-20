@@ -305,16 +305,35 @@ def _intake_rows(
 @app.get("/intake", response_class=HTMLResponse)
 def intake_page(request: Request) -> HTMLResponse:
     """The content page — Excel files from Drive, parsed and listed."""
+    from concurrent.futures import ThreadPoolExecutor
+
     from demo import intake
     from demo.oauth import can_read_all_drive, granted_scopes
 
     auth = _auth_state()
     folder_ids, whole_drive = _scan_setting(request)
-    rows = _intake_rows(folder_ids, whole_drive) if auth["signed_in"] else []
+    signed_in = auth["signed_in"]
+
+    # Three independent things: the file listing, the folder picker and
+    # the granted scopes. They each cost a round trip, so do them at the
+    # same time rather than in series.
+    rows: list[dict[str, Any]] = []
+    folders: list[dict[str, str]] = []
+    if signed_in:
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            f_rows = pool.submit(_intake_rows, folder_ids, whole_drive)
+            f_folders = pool.submit(intake.list_drive_folders)
+            f_scopes = pool.submit(granted_scopes)
+            rows = f_rows.result()
+            folders = f_folders.result()
+            scopes = f_scopes.result()
+    else:
+        scopes = []
+
     # A sign-in that only holds `drive.file` cannot see files the valuer
     # put in Drive himself. Say so, rather than showing an empty list that
     # looks like the app is broken.
-    limited = auth["signed_in"] and not can_read_all_drive()
+    limited = signed_in and not can_read_all_drive()
     return templates.TemplateResponse(
         request,
         "intake.html",
@@ -323,8 +342,8 @@ def intake_page(request: Request) -> HTMLResponse:
             "files": rows,
             "upload_error": None,
             "limited_scope": limited,
-            "granted_scopes": granted_scopes(),
-            "folders": intake.list_drive_folders() if auth["signed_in"] else [],
+            "granted_scopes": scopes,
+            "folders": folders,
             "scan_folders": folder_ids,
             "scan_whole_drive": whole_drive,
         },
