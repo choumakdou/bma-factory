@@ -15,17 +15,23 @@ COPY ingest/     ./ingest/
 COPY modules/    ./modules/
 COPY demo/       ./demo/
 
+# Reference data: the parsed ORO case database, the CHFT Map VBA source,
+# and the case database notes. Runtime artefacts (ledger.sqlite3,
+# data/outputs/, data/runs/) are gitignored and recreated on boot.
+COPY data/       ./data/
+
 # The container's working dir is /app; the engine imports "app.*", "ingest.*", "modules.*"
 ENV PYTHONPATH=/app
 # Cloud Run sets $PORT (defaults 8080)
 ENV PORT=8080
 
-EXPOSE 8080
+# Runtime write paths. The engine writes the idempotency ledger to
+# data/ and generated artefacts to /tmp/bma-factory-demo/. Create them
+# up front and make them writable so the app works whichever uid it runs as.
+RUN mkdir -p /app/data/outputs /app/data/runs /tmp/bma-factory-demo/output /tmp/bma-factory-demo/tokens \
+    && chmod -R 0777 /app/data /tmp/bma-factory-demo
 
-# Run as non-root, matching gcr.io/cloudrun/hello (the only image we know
-# starts on this project). Cloud Run's sandbox has been refusing to start
-# root-user images since 2026-10-19.
-USER 65532:65532
+EXPOSE 8080
 
 # Run the demo FastAPI app. For production, swap in the full API router.
 CMD ["uvicorn", "demo.app:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1", "--log-level", "info"]

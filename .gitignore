@@ -25,6 +25,7 @@ htmlcov/
 # Engine outputs (per-run)
 data/outputs/
 data/runs/
+data/ledger.sqlite3
 /tmp/bma-factory-demo/
 
 # Local secrets — never commit
