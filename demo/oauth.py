@@ -73,6 +73,7 @@ _SECRET_API = "https://secretmanager.googleapis.com/v1/projects"
 TOKEN_BUCKET = os.environ.get("VF_TOKEN_BUCKET", "") or os.environ.get(
     "GOOGLE_CLOUD_PROJECT", "bma-factory") + "_cloudbuild"
 TOKEN_OBJECT = os.environ.get("VF_TOKEN_OBJECT", "bma-factory/app/oauth-token.json")
+PROBE_OBJECT = TOKEN_OBJECT.replace(".json", ".probe.json")
 
 
 def is_configured() -> bool:
@@ -109,6 +110,66 @@ def _gcs_write(blob: str) -> bool:
         return False
     except Exception as e:  # noqa: BLE001
         log.warning("GCS write failed: %s", e)
+        return False
+
+
+def _gcs_probe() -> bool:
+    """Round-trip a probe through GCS without touching the real token object."""
+    if not TOKEN_BUCKET:
+        return False
+    ok = _gcs_write_to(json.dumps({"probe": True}), PROBE_OBJECT)
+    if not ok:
+        return False
+    try:
+        _gcs_delete(PROBE_OBJECT)
+    except Exception:  # noqa: BLE001
+        pass
+    return True
+
+
+def _gcs_write_to(blob: str, obj_name: str) -> bool:
+    if not TOKEN_BUCKET:
+        return False
+    token = _sa_access_token()
+    if not token:
+        return False
+    import urllib.parse
+    import urllib.request
+    obj = urllib.parse.quote(obj_name, safe="")
+    url = (f"https://storage.googleapis.com/upload/storage/v1/b/{TOKEN_BUCKET}"
+           f"/o?uploadType=media&name={obj}")
+    req = urllib.request.Request(
+        url, method="POST", data=blob.encode("utf-8"),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            r.read()
+        return True
+    except urllib.error.HTTPError as e:
+        log.warning("GCS write failed: %s %s", e.code, e.reason)
+        return False
+    except Exception as e:  # noqa: BLE001
+        log.warning("GCS write failed: %s", e)
+        return False
+
+
+def _gcs_delete(obj_name: str) -> bool:
+    token = _sa_access_token()
+    if not token or not TOKEN_BUCKET:
+        return False
+    import urllib.parse
+    import urllib.request
+    obj = urllib.parse.quote(obj_name, safe="")
+    url = f"https://storage.googleapis.com/storage/v1/b/{TOKEN_BUCKET}/o/{obj}"
+    req = urllib.request.Request(url, method="DELETE",
+                                 headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            r.read()
+        return True
+    except Exception as e:  # noqa: BLE001
+        log.warning("GCS delete failed: %s", e)
         return False
 
 
@@ -340,7 +401,7 @@ def secret_store_status() -> dict:
     out["gcs_bucket"] = TOKEN_BUCKET or None
     out["gcs_object"] = TOKEN_OBJECT if TOKEN_BUCKET else None
     if TOKEN_BUCKET:
-        out["gcs_can_write"] = _gcs_write(json.dumps({"probe": True}))
+        out["gcs_can_write"] = _gcs_probe()
         out["gcs_can_read"] = _gcs_read() is not None
     out["ok"] = bool(out.get("gcs_can_write") or out.get("can_write"))
     out["durable_store"] = (
