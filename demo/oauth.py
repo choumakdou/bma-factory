@@ -156,17 +156,7 @@ def _secret_ensure() -> bool:
         return False
     import urllib.request
     url = f"{_SECRET_API}/{PROJECT_ID}/secrets/{SECRET_NAME}"
-    # Does it already exist?
-    req = urllib.request.Request(
-        url, headers={"Authorization": f"Bearer {token}"})
-    try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            r.read()
-        return True
-    except urllib.error.HTTPError as e:
-        if e.code != 404:
-            return False
-    # Create it.
+    # Create it. If it already exists this returns 409, which is fine.
     body = json.dumps({"replication": {"automatic": {}}}).encode("utf-8")
     req = urllib.request.Request(
         url, method="POST", data=body,
@@ -178,6 +168,8 @@ def _secret_ensure() -> bool:
         log.info("created Secret Manager secret %s", SECRET_NAME)
         return True
     except urllib.error.HTTPError as e:
+        if e.code == 409:
+            return True  # already there
         log.warning("could not create secret %s: %s %s", SECRET_NAME, e.code, e.reason)
         return False
     except Exception as e:  # noqa: BLE001
@@ -191,8 +183,6 @@ def _secret_write(blob: str) -> bool:
         return False
     token = _sa_access_token()
     if not token:
-        return False
-    if not _secret_ensure():
         return False
     import base64
     import json as _json
@@ -211,6 +201,11 @@ def _secret_write(blob: str) -> bool:
         log.info("stored OAuth token in Secret Manager secret %s", SECRET_NAME)
         return True
     except urllib.error.HTTPError as e:
+        if e.code == 404:
+            # Secret does not exist yet — create it, then retry once.
+            if _secret_ensure():
+                return _secret_write(blob)
+            return False
         log.warning("Secret Manager write failed: %s %s", e.code, e.reason)
         return False
     except Exception as e:  # noqa: BLE001
@@ -255,12 +250,31 @@ def secret_store_status() -> dict:
         out["secret_exists"] = True
         out["can_read_secret_meta"] = True
     except urllib.error.HTTPError as e:
-        out["secret_exists"] = e.code != 404
-        out["can_read_secret_meta"] = e.code != 403
-        if e.code == 403:
+        out["secret_exists"] = None  # 403 hides existence; 404 means absent
+        out["can_read_secret_meta"] = False
+        out["secret_meta_http"] = e.code
+        if e.code == 404:
+            out["secret_exists"] = False
+        else:
             out["reason"] = "no permission on Secret Manager"
     except Exception as e:  # noqa: BLE001
-        out["reason"] = str(e)
+        out["reason"] = str(e)[:200]
+    # Probe read (403 = no access, 404 = no version yet).
+    try:
+        vurl = f"{_SECRET_API}/{PROJECT_ID}/secrets/{SECRET_NAME}/versions/latest:access"
+        vreq = urllib.request.Request(
+            vurl, method="POST", data=b"{}",
+            headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(vreq, timeout=15) as r:
+            r.read()
+        out["can_read_version"] = True
+    except urllib.error.HTTPError as e:
+        out["can_read_version"] = False
+        out["read_version_http"] = e.code
+    except Exception as e:  # noqa: BLE001
+        out["can_read_version"] = False
+        out["read_version_error"] = str(e)[:120]
     out["can_write"] = _secret_write(json.dumps({"probe": True}))
     out["ok"] = bool(out.get("can_write"))
     return out
