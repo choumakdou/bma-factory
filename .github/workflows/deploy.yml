@@ -24,6 +24,7 @@ env:
   SERVICE: bma-factory-demo
   RUNTIME_SA: service-ac1@bma-factory.iam.gserviceaccount.com
   SECRET_NAME: engine-sa-key
+  TOKEN_SECRET: user-oauth-token
   IMAGE: gcr.io/bma-factory/bma-factory-demo
   # The Shared Drive the engine writes to. Without this set, the engine
   # falls back to the SA's Drive root — which fails on personal Google
@@ -86,6 +87,8 @@ jobs:
           if [ -n "${{ secrets.VF_DIAG_TOKEN }}" ]; then
             ENV_LIST+=("VF_DIAG_TOKEN=${{ secrets.VF_DIAG_TOKEN }}")
           fi
+          ENV_LIST+=("VF_TOKEN_SECRET=${{ env.TOKEN_SECRET }}")
+          ENV_LIST+=("GOOGLE_CLOUD_PROJECT=${{ env.PROJECT }}")
           if [ ${#ENV_LIST[@]} -gt 0 ]; then
             ENV_CSV=$(IFS=,; echo "${ENV_LIST[*]}")
           else
@@ -93,10 +96,11 @@ jobs:
           fi
           echo "==> env vars: $ENV_CSV"
 
-          # NOTE: no --set-secrets / --update-secrets. The engine writes to
-          # Drive with the valuer's OAuth credentials, so the service-account
-          # key is never read. Mounting it was blocking container startup.
-          echo "==> Deploying (no service-account key mount — OAuth only)"
+          # The service-account key IS mounted: the app uses its own identity
+          # to store the valuer's OAuth refresh token in Secret Manager, so
+          # the sign-in survives Cloud Run scaling the container to zero.
+          # Drive writes still use the valuer's OAuth credentials.
+          echo "==> Deploying (SA key mounted for Secret Manager token storage)"
           # The explicit TCP startup probe gives the container up to
           # 240s (period 2s x failureThreshold 120) to open PORT 8080
           # instead of Cloud Run's default 240 x 1s window, and it
@@ -106,6 +110,7 @@ jobs:
             --region "${{ env.REGION }}" \
             --platform managed \
             --service-account "${{ env.RUNTIME_SA }}" \
+            --update-secrets "GOOGLE_APPLICATION_CREDENTIALS=${{ env.SECRET_NAME }}:latest" \
             ${ENV_CSV:+--set-env-vars "$ENV_CSV"} \
             --allow-unauthenticated \
             --port 8080 \

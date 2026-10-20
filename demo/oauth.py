@@ -49,15 +49,106 @@ REDIRECT_URI  = os.environ.get(
     "https://bma-factory-demo-bxbgttiecq-df.a.run.app/auth/callback",
 )
 
-# Token storage — one file per user, keyed by email hash in v0.2.
-# For single-user demo, a single file is fine.
+# Token storage.
+#
+# The container filesystem is EPHEMERAL — Cloud Run scales to zero, and every
+# cold start wipes /tmp. A refresh token in /tmp means re-signing-in every
+# time the console sleeps, which is unusable for a daily work console.
+#
+# So the token lives in Secret Manager when the runtime service account can
+# reach it (VF_TOKEN_SECRET + GOOGLE_APPLICATION_CREDENTIALS), with the local
+# file as a fallback for the demo.
 TOKEN_DIR  = Path("/tmp/bma-factory-demo/tokens")
 TOKEN_FILE = TOKEN_DIR / "user.json"
+
+# Name of the Secret Manager secret holding the token JSON.
+SECRET_NAME = os.environ.get("VF_TOKEN_SECRET", "")
+PROJECT_ID  = os.environ.get("GOOGLE_CLOUD_PROJECT", "bma-factory")
+_SECRET_API = "https://secretmanager.googleapis.com/v1/projects"
 
 
 def is_configured() -> bool:
     """True if the OAuth client ID + secret are set in the env."""
     return bool(CLIENT_ID) and bool(CLIENT_SECRET)
+
+
+def _sa_access_token() -> Optional[str]:
+    """Access token for the app's own service account, or None."""
+    if not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+        return None
+    try:
+        import google.auth
+        import google.auth.transport.requests as tr
+        creds, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        if not creds.valid:
+            creds.refresh(tr.Request())
+        return creds.token
+    except Exception as e:  # noqa: BLE001
+        log.warning("service-account auth unavailable: %s", e)
+        return None
+
+
+def _secret_read() -> Optional[str]:
+    """Read the token JSON from Secret Manager."""
+    if not SECRET_NAME:
+        return None
+    token = _sa_access_token()
+    if not token:
+        return None
+    import base64
+    import urllib.request
+    url = f"{_SECRET_API}/{PROJECT_ID}/secrets/{SECRET_NAME}/versions/latest:access"
+    req = urllib.request.Request(
+        url, method="POST", data=b"{}",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            import json as _json
+            payload = _json.loads(r.read())
+        return base64.b64decode(payload["payload"]["data"]).decode("utf-8")
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            log.info("no token in Secret Manager yet (secret %s)", SECRET_NAME)
+        else:
+            log.warning("Secret Manager read failed: %s %s", e.code, e.reason)
+        return None
+    except Exception as e:  # noqa: BLE001
+        log.warning("Secret Manager read failed: %s", e)
+        return None
+
+
+def _secret_write(blob: str) -> bool:
+    """Write the token JSON to Secret Manager as a new version."""
+    if not SECRET_NAME:
+        return False
+    token = _sa_access_token()
+    if not token:
+        return False
+    import base64
+    import json as _json
+    import urllib.request
+    url = f"{_SECRET_API}/{PROJECT_ID}/secrets/{SECRET_NAME}:addVersion"
+    body = _json.dumps({
+        "payload": {"data": base64.b64encode(blob.encode("utf-8")).decode("ascii")}
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        url, method="POST", data=body,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            r.read()
+        log.info("stored OAuth token in Secret Manager secret %s", SECRET_NAME)
+        return True
+    except urllib.error.HTTPError as e:
+        log.warning("Secret Manager write failed: %s %s", e.code, e.reason)
+        return False
+    except Exception as e:  # noqa: BLE001
+        log.warning("Secret Manager write failed: %s", e)
+        return False
 
 
 def get_flow() -> "Flow":  # type: ignore
@@ -83,19 +174,31 @@ def get_flow() -> "Flow":  # type: ignore
 
 
 def save_credentials(creds: Credentials) -> None:
+    """Persist the credentials to Secret Manager (preferred) or /tmp."""
+    blob = creds.to_json()
+    if _secret_write(blob):
+        # Keep a local copy too — it lets the running instance use the token
+        # immediately without a round trip, and survives a Secret Manager blip.
+        TOKEN_DIR.mkdir(parents=True, exist_ok=True)
+        TOKEN_FILE.write_text(blob)
+        TOKEN_FILE.chmod(0o600)
+        return
     TOKEN_DIR.mkdir(parents=True, exist_ok=True)
-    TOKEN_FILE.write_text(creds.to_json())
-    # Lock the file down — the refresh token is sensitive
+    TOKEN_FILE.write_text(blob)
     TOKEN_FILE.chmod(0o600)
-    log.info("saved OAuth credentials for %s", creds.client_id)
+    log.info("saved OAuth credentials locally (Secret Manager unavailable)")
 
 
 def load_credentials() -> Optional[Credentials]:
     """Load the stored credentials, refreshing if expired."""
-    if not TOKEN_FILE.exists():
-        return None
+    blob = _secret_read()
+    if blob is None:
+        if not TOKEN_FILE.exists():
+            return None
+        blob = TOKEN_FILE.read_text()
     try:
-        creds = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
+        import json as _json
+        creds = Credentials.from_authorized_user_info(_json.loads(blob), SCOPES)
     except Exception as e:
         log.warning("failed to load stored credentials: %s", e)
         return None
@@ -110,8 +213,25 @@ def load_credentials() -> Optional[Credentials]:
 
 
 def clear_credentials() -> None:
+    """Sign out — drop the local copy and destroy the Secret Manager version."""
     if TOKEN_FILE.exists():
         TOKEN_FILE.unlink()
+    if SECRET_NAME:
+        token = _sa_access_token()
+        if token:
+            import urllib.request
+            url = (f"{_SECRET_API}/{PROJECT_ID}/secrets/{SECRET_NAME}"
+                   ":destroySecretVersion")
+            req = urllib.request.Request(
+                url, method="POST", data=b"{}",
+                headers={"Authorization": f"Bearer {token}",
+                         "Content-Type": "application/json"},
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    r.read()
+            except Exception as e:  # noqa: BLE001
+                log.warning("could not destroy secret version: %s", e)
 
 
 def get_drive():
