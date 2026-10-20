@@ -73,9 +73,16 @@ def is_configured() -> bool:
     return bool(CLIENT_ID) and bool(CLIENT_SECRET)
 
 
+_SA_LAST_ERROR: Optional[str] = None
+
+
 def _sa_access_token() -> Optional[str]:
     """Access token for the app's own service account, or None."""
-    if not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+    global _SA_LAST_ERROR
+    _SA_LAST_ERROR = None
+    path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    if not path:
+        _SA_LAST_ERROR = "GOOGLE_APPLICATION_CREDENTIALS is not set"
         return None
     try:
         import google.auth
@@ -87,7 +94,8 @@ def _sa_access_token() -> Optional[str]:
             creds.refresh(tr.Request())
         return creds.token
     except Exception as e:  # noqa: BLE001
-        log.warning("service-account auth unavailable: %s", e)
+        _SA_LAST_ERROR = f"{type(e).__name__}: {e}"
+        log.warning("service-account auth unavailable: %s", _SA_LAST_ERROR)
         return None
 
 
@@ -199,8 +207,20 @@ def secret_store_status() -> dict:
         "project": PROJECT_ID,
         "sa_credentials_present": bool(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")),
     }
+    cred_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    if cred_path:
+        p = Path(cred_path)
+        out["sa_credentials_path"] = cred_path
+        out["sa_credentials_file_exists"] = p.exists()
+        if p.exists():
+            try:
+                head = p.read_text()[:200]
+                out["sa_credentials_head"] = head.replace("\n", " ")[:160]
+            except Exception as e:  # noqa: BLE001
+                out["sa_credentials_read_error"] = str(e)[:160]
     tok = _sa_access_token()
     out["sa_access_token"] = bool(tok)
+    out["sa_error"] = _SA_LAST_ERROR
     if not tok or not SECRET_NAME:
         out["ok"] = False
         out["reason"] = "no service-account identity or no secret name configured"
