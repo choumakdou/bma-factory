@@ -182,12 +182,23 @@ def _gcs_read() -> Optional[str]:
     """Read the token JSON from Cloud Storage."""
     if not TOKEN_BUCKET:
         return None
+    return _gcs_read_from(TOKEN_OBJECT)
+
+
+def _gcs_read_from(obj_name: str) -> Optional[str]:
+    """Read an arbitrary object from the token bucket.
+
+    Used for the intake cache, which lives in the same bucket under a
+    different prefix.
+    """
+    if not TOKEN_BUCKET:
+        return None
     token = _sa_access_token()
     if not token:
         return None
     import urllib.parse
     import urllib.request
-    obj = urllib.parse.quote(TOKEN_OBJECT, safe="")
+    obj = urllib.parse.quote(obj_name, safe="")
     url = f"https://storage.googleapis.com/storage/v1/b/{TOKEN_BUCKET}/o/{obj}?alt=media"
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
     try:

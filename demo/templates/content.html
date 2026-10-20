@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ file.name }} · Content · BMA Factory</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="case-head">
+    <div class="case-head-left">
+      <div class="case-ref-row">
+        <a class="case-back" href="/intake">← Content</a>
+        <span class="case-ref-sep">·</span>
+        <span class="case-ref">{{ file.folder }}/{{ file.name }}</span>
+      </div>
+      <h1>{{ file.name }}</h1>
+      <div class="case-meta">
+        <span class="meta-pill">Format · {{ parsed.format_label }}</span>
+        <span class="meta-pill">Sheet · {{ parsed.sheet_name }}</span>
+        <span class="meta-pill">{{ parsed.total_rows }} rows</span>
+        <span class="meta-pill">Modified {{ file.modified_time[:10] }}</span>
+      </div>
+    </div>
+    <div class="case-head-right">
+      {% if parsed.project %}
+      <div class="adopted">
+        <div class="adopted-label">Becomes project</div>
+        <div class="adopted-figure" style="font-size:1.3rem">{{ parsed.project.title }}</div>
+        <div class="adopted-rate">HK${{ "{:,.0f}".format(parsed.project.adopted_value_hkd) }} · {{ "{:,.0f}".format(parsed.project.nfa_sqft) }} sf N</div>
+        <div style="margin-top:.5rem">
+          <a class="dl-link" href="/case/{{ parsed.project.id }}">Open the project page →</a>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </header>
+
+  <main class="case-main">
+    {% if parsed.error %}
+    <section class="card">
+      <h2>Could not read this file</h2>
+      <p class="muted">{{ parsed.error }}</p>
+    </section>
+    {% else %}
+
+    <section class="qc-strip">
+      {% for k, v in parsed.qc_counts.items() %}
+      <div class="qc-pill qc-warn"><b>{{ v }}</b> {{ k }}</div>
+      {% endfor %}
+      <div class="qc-pill qc-info"><b>{{ parsed.stats.comps if parsed.stats.comps is defined else parsed.total_rows }}</b> {{ "comps" if parsed.stats.comps is defined else "rows" }}</div>
+      <div class="qc-pill qc-info"><b>{{ parsed.stats.date_min[:4] if parsed.stats.date_min else "—" }}</b>–{{ parsed.stats.date_max[:4] if parsed.stats.date_max else "—" }}</div>
+    </section>
+
+    {% if parsed.notes %}
+    <section class="card">
+      <h2>Notes</h2>
+      <ul class="muted">{% for n in parsed.notes %}<li>{{ n }}</li>{% endfor %}</ul>
+    </section>
+    {% endif %}
+
+    <section class="card">
+      <h2>Content</h2>
+      <p class="muted">
+        {% if parsed.total_rows > shown_rows %}
+          Showing the first {{ shown_rows }} of {{ parsed.total_rows }} rows.
+        {% else %}
+          All {{ parsed.total_rows }} rows.
+        {% endif %}
+      </p>
+      <div class="table-scroll">
+        <table class="comps content-table">
+          <thead>
+            <tr>
+              {% for h in parsed.headers %}<th>{{ h }}</th>{% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in parsed.rows[:shown_rows] %}
+            <tr class="comp-row">
+              {% for h in parsed.headers %}
+              <td>{{ r.get(h) }}</td>
+              {% endfor %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    {% if parsed.sheets and parsed.sheets|length > 1 %}
+    <section class="card">
+      <h2>Other sheets</h2>
+      <p class="muted">This workbook has {{ parsed.sheets|length }} sheets; the first one with data is shown above.</p>
+      <p>{% for s in parsed.sheets %}<span class="flag {{ 'flag-ok' if s == parsed.sheet_name else 'flag-generic' }}">{{ s }}</span> {% endfor %}</p>
+    </section>
+    {% endif %}
+    {% endif %}
+  </main>
+
+  <footer class="foot muted small">
+    bma-factory · content intake · service <code>bma-factory-demo</code> · region <code>asia-east2</code>
+  </footer>
+</body>
+</html>

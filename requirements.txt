@@ -35,6 +35,12 @@ pydantic-core==2.50.1
 jinja2==3.1.6
 MarkupSafe==3.0.4
 
+# --- form parsing ---
+# Required by FastAPI's `await request.form()` — without it the browser
+# upload route raises at runtime, not at import, so it fails only when
+# somebody actually uses it.
+python-multipart==0.0.32
+
 # --- documents ---
 openpyxl==3.1.5
 et-xmlfile==2.0.0

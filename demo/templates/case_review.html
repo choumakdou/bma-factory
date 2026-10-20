@@ -101,6 +101,39 @@
     </section>
 
     <section class="card">
+      <h2>Source content</h2>
+      {% if case.source_drive_file %}
+        <p class="muted">
+          This project was built from a workbook in your Drive. The parsed
+          content lives on its own page — everything below (subject,
+          comparables, QC flags) is derived from it.
+        </p>
+        <div class="source-box">
+          <div class="source-box-left">
+            <div class="source-file">{{ case.source_drive_file.name }}</div>
+            <div class="muted small">
+              /{{ case.source_drive_file.folder }}/ ·
+              {{ "{:,}".format(case.source_drive_file.size) }} bytes ·
+              modified {{ case.source_drive_file.modified_time[:10] }}
+            </div>
+          </div>
+          <div class="source-box-right">
+            <a class="dl-link" href="/content/{{ case.source_drive_file.id }}">View the content →</a>
+            {% if case.source_drive_file.web_view_link %}
+            <div><a class="dl-link dl-link-drive" href="{{ case.source_drive_file.web_view_link }}" target="_blank" rel="noopener">Open in Google Drive ↗</a></div>
+            {% endif %}
+          </div>
+        </div>
+      {% else %}
+        <p class="muted">
+          This project is using the embedded demo data. Drop a workbook into
+          <code>/Intake/</code> in your Drive and it will be picked up on the
+          <a href="/intake">content page</a>.
+        </p>
+      {% endif %}
+    </section>
+
+    <section class="card">
       <h2>Map view</h2>
       <p class="muted">The v8.0 contract is wired: <code>locations[]</code> would render here as a Leaflet map with QC flags as inline labels. For the demo MVP, the map is a placeholder — the data shape is in <code>demo/case_data.py</code> and the locations list is built in <code>demo/app.py::_ranked()</code>.</p>
       <div class="map-placeholder">

@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Content · BMA Factory</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="case-head">
+    <div class="case-head-left">
+      <div class="case-ref-row">
+        <a class="case-back" href="/">← Console</a>
+        <span class="case-ref-sep">·</span>
+        <span class="case-ref">Content</span>
+      </div>
+      <h1>Content</h1>
+      <div class="case-addr">Workbooks in your Drive, parsed and shown here</div>
+    </div>
+  </header>
+
+  <main class="case-main">
+    {% if not auth.signed_in %}
+    <section class="card">
+      <h2>Sign in to see your content</h2>
+      <p class="muted">
+        Content comes from your own Drive, so the app reads it with your
+        permissions and your quota. Sign in and drop a workbook into
+        <code>/Intake/</code> — it will appear here, and a Memfus Wong
+        extract will also become a project on the console.
+      </p>
+      <a class="gen-btn" href="/auth/login">Sign in with Google</a>
+    </section>
+    {% else %}
+    <section class="card">
+      <h2>Drop a workbook in</h2>
+      <p class="muted">
+        Two ways in. Upload from here and the file lands in
+        <code>/Intake/</code> in your Drive — same folder either way, so
+        the app treats a file you drag in and a file you upload here
+        identically. The format is detected from the header row:
+        a Memfus Wong extract (<code>MEM_NO</code> + <code>INST_DATE</code>)
+        also becomes a project.
+      </p>
+      <form method="post" action="/upload" enctype="multipart/form-data" class="upload-form">
+        <input type="file" name="file" accept=".xlsx,.xlsm,.xls" required>
+        <button type="submit" class="gen-btn">Upload to /Intake/</button>
+      </form>
+      {% if upload_error %}
+      <p class="muted small" style="color:#b3261e">⚠ {{ upload_error }}</p>
+      {% endif %}
+    </section>
+
+    <section class="card">
+      <h2>Workbooks</h2>
+      <p class="muted">
+        Scanned in <code>/Intake/</code> and <code>/ORO/</code>. The parsed
+        content is cached in Cloud Storage, so this page does not re-read
+        the file on every visit.
+      </p>
+      {% if files %}
+      <table class="comps">
+        <thead>
+          <tr>
+            <th>File</th>
+            <th>Folder</th>
+            <th>Format</th>
+            <th class="num">Rows</th>
+            <th>QC</th>
+            <th>Modified</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for f in files %}
+          <tr class="comp-row">
+            <td>
+              <div class="comp-addr">{{ f.name }}</div>
+              <div class="comp-name muted">{{ f.size }} bytes</div>
+            </td>
+            <td>/{{ f.folder }}/</td>
+            <td>
+              <span class="flag flag-{{ f.format_id }}">{{ f.format_label }}</span>
+              {% if f.error %}<div class="muted small" style="color:#b3261e">{{ f.error }}</div>{% endif %}
+            </td>
+            <td class="num">{{ f.total_rows }}</td>
+            <td>
+              {% for k, v in f.qc_counts.items() %}
+              <span class="flag flag-{{ 'warn' if v else 'ok' }}">{{ v }} {{ k }}</span>
+              {% endfor %}
+            </td>
+            <td class="muted small">{{ f.modified_time[:10] }}</td>
+            <td>
+              <a class="dl-link" href="/content/{{ f.id }}">View content</a>
+              {% if f.project %}
+              <div><a class="dl-link dl-link-drive" href="/case/{{ f.project.id }}">→ {{ f.project.title }}</a></div>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty-state">
+        <p>No workbooks yet in <code>/Intake/</code> or <code>/ORO/</code>.</p>
+        <p class="muted small">
+          Upload one above, or drop it straight into <code>/Intake/</code> in
+          Drive. A Memfus Wong extract with a row marked
+          <code>MEM_NO = "Subject"</code> becomes a project automatically.
+        </p>
+      </div>
+      {% endif %}
+    </section>
+    {% endif %}
+  </main>
+
+  <footer class="foot muted small">
+    bma-factory · content intake · service <code>bma-factory-demo</code> · region <code>asia-east2</code>
+  </footer>
+</body>
+</html>

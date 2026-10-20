@@ -66,6 +66,9 @@ class Case:
     status: str = "active"             # "active" | "completed" | "archived"
     last_action: str = ""              # free-form, e.g. "Generated workbook 2026-10-13"
     data_loader: Optional[Callable[[], CaseData]] = None
+    #: Set when the case came from a workbook in Drive. Carries the file id
+    #: so the project page can link back to the content it was built from.
+    source_drive_file: Optional[dict[str, Any]] = None
 
 
 # --- loaders -----------------------------------------------------------------
@@ -108,21 +111,110 @@ CASES: list[Case] = [
 
 
 def get_case(case_id: str) -> Optional[Case]:
-    """Look up a case by its URL slug."""
+    """Look up a case by its URL slug.
+
+    Static registry first, then projects derived from workbooks in Drive.
+    """
     for c in CASES:
+        if c.id == case_id:
+            return c
+    for c in get_drive_cases():
         if c.id == case_id:
             return c
     return None
 
 
+def get_drive_cases() -> list[Case]:
+    """Projects derived from Excel files sitting in the Drive intake folders.
+
+    A Memfus Wong extract carries its own subject row, so dropping one in
+    Drive is enough to create a project — the valuer does not have to
+    re-key anything.
+
+    Returns an empty list when nobody is signed in or Drive is empty.
+    """
+    try:
+        from demo import intake
+    except Exception:  # noqa: BLE001
+        return []
+    try:
+        files = intake.list_drive_workbooks()
+    except Exception:  # noqa: BLE001
+        return []
+
+    out: list[Case] = []
+    seen: set[str] = set()
+    for f in files:
+        try:
+            parsed = intake.parse_drive_file(f)
+        except Exception:  # noqa: BLE001
+            continue
+        if not parsed.project:
+            continue
+        p = parsed.project
+        case_id = p["id"]
+        if case_id in seen:
+            continue
+        seen.add(case_id)
+        out.append(Case(
+            id=case_id,
+            title=p["title"],
+            category=p["category"],
+            case_ref=p.get("case_ref", ""),
+            case_id_short="MW extract",
+            client="",
+            address=p.get("address", ""),
+            district=p.get("district", ""),
+            valuation_date=p.get("valuation_date", ""),
+            adopted_value_hkd=int(p.get("adopted_value_hkd") or 0),
+            adopted_rate_psf_n=int(p.get("adopted_rate_psf_n") or 0),
+            nfa_sqft=int(p.get("nfa_sqft") or 0),
+            usage=p.get("usage", ""),
+            summary=p.get("summary", ""),
+            source=f"Drive · {f.folder}/{f.name}",
+            status="active",
+            last_action=f"Imported from {f.name} ({f.modified_time[:10]})",
+            data_loader=_make_drive_loader(f, parsed),
+            source_drive_file=f.to_dict(),
+        ))
+    return out
+
+
+def _make_drive_loader(f: Any, parsed: Any) -> Callable[[], CaseData]:
+    """A loader that re-derives the subject and comps from the Drive file."""
+    def loader() -> CaseData:
+        from demo import intake
+        current = intake.parse_drive_file(f)
+        built = intake.build_case_data(current)
+        if built is None:
+            raise ValueError(
+                f"'{f.name}' no longer yields a subject row, so the project "
+                f"cannot be built. Re-upload a Memfus Wong extract with a "
+                f"row marked MEM_NO = 'Subject'."
+            )
+        subject, comps = built
+        return CaseData(subject=subject, comps=comps)
+    return loader
+
+
+def get_all_cases() -> list[Case]:
+    """Every case — static registry plus Drive-derived projects."""
+    static = list(CASES)
+    drive_ids = {c.id for c in static}
+    for c in get_drive_cases():
+        if c.id not in drive_ids:
+            static.append(c)
+    return static
+
+
 def get_active_cases() -> list[Case]:
     """Cases that are in progress or recently valued — the things on your desk."""
-    return [c for c in CASES if c.status in ("active", "in_progress")]
+    return [c for c in get_all_cases() if c.status in ("active", "in_progress")]
 
 
 def get_history_cases() -> list[Case]:
     """Cases that are completed and kept for reference."""
-    return [c for c in CASES if c.status == "completed"]
+    return [c for c in get_all_cases() if c.status == "completed"]
 
 
 def get_cases_by_category() -> list[tuple[str, list[Case]]]:
@@ -132,7 +224,7 @@ def get_cases_by_category() -> list[tuple[str, list[Case]]]:
     show empty-state placeholders), but only if they're in CATEGORY_ORDER.
     """
     by_cat: dict[str, list[Case]] = {}
-    for c in CASES:
+    for c in get_all_cases():
         by_cat.setdefault(c.category, []).append(c)
 
     out: list[tuple[str, list[Case]]] = []

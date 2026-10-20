@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from googleapiclient.errors import HttpError
-from googleapiclient.http import MediaFileUpload
+from googleapiclient.http import MediaFileUpload, MediaIoBaseUpload
 
 log = logging.getLogger("bma-factory.drive")
 
@@ -97,12 +97,37 @@ def _find_or_create_folder(name: str, parent_id: str | None = None) -> str:
 
 
 def ensure_drive_layout() -> dict[str, str]:
-    """Create the three demo folders, idempotently. Returns ``{name: id}``."""
+    """Create the demo folders, idempotently. Returns ``{name: id}``."""
     return {
+        "Intake":    _find_or_create_folder("Intake"),
         "ORO":       _find_or_create_folder("ORO"),
         "Outputs":   _find_or_create_folder("Outputs"),
         "Templates": _find_or_create_folder("Templates"),
     }
+
+
+def upload_to_folder(name: str, data: bytes, folder: str = "Intake") -> dict[str, Any]:
+    """Upload bytes into one of the app's folders.
+
+    Used by the browser upload route, so a file the valuer picks on their
+    phone lands in exactly the same place as a file they drag into Drive
+    by hand.
+    """
+    import io as _io
+
+    drive = _get_drive()
+    folder_id = _find_or_create_folder(folder)
+    media = MediaIoBaseUpload(
+        _io.BytesIO(data), mimetype=MIME_XLSX, resumable=False
+    )
+    body = {"name": name, "parents": [folder_id]}
+    f = drive.files().create(
+        body=body, media_body=media,
+        fields="id,name,webViewLink,parents,size,modifiedTime",
+        supportsAllDrives=True,
+    ).execute()
+    log.info("uploaded %s → Drive /%s/ (%s)", name, folder, f.get("webViewLink", f.get("id")))
+    return f
 
 
 def upload_to_outputs(local_path: Path, mime: str = MIME_XLSX) -> dict[str, Any]:

@@ -1,18 +1,23 @@
-"""bma-factory demo — case library + per-case review.
+"""bma-factory demo — work console, per-case review, and content intake.
 
 Routes:
-  GET  /                          — case library (categories + cards)
+  GET  /                          — work console (dashboard)
   GET  /case/<case_id>            — per-case review (ranked comps + Generate)
+  GET  /intake                    — content page: workbooks in Drive
+  GET  /content/<file_id>         — the parsed content of one workbook
+  POST /upload                    — put a workbook into Drive /Intake/
   GET  /api/cases                 — JSON list of all cases
   GET  /api/cases/<case_id>       — JSON view of one case
+  GET  /api/intake                — JSON view of the intake listing
   POST /generate/<case_id>        — run the engine for one case
   GET  /download/<filename>      — serve a generated workbook
   GET  /diag                      — smoke test (always returns JSON)
   GET  /healthz                   — liveness
 
-For the demo MVP the case data is embedded in `case_data.py` (Bel-Air M2
-only). v0.2 swaps the loader to read ORO workbooks from the user's
-Drive `/ORO/` folder.
+Case data comes from two places. The Bel-Air M2 demo case is embedded in
+`case_data.py`; anything the valuer drops into `Drive:/Intake/` is
+parsed by `demo/intake.py`, and a Memfus Wong extract carries its own
+subject row, so it becomes a project without being re-keyed.
 """
 
 from __future__ import annotations
@@ -58,7 +63,18 @@ else:  # pragma: no cover - only when the image is built without demo/static
 def _load_case(case: Case) -> CaseData:
     if case.data_loader is None:
         raise HTTPException(status_code=501, detail=f"case '{case.id}' has no data loader yet")
-    return case.data_loader()
+    try:
+        return case.data_loader()
+    except ValueError as e:
+        # A Drive-derived project whose source workbook no longer yields a
+        # subject row. Say so plainly rather than showing an empty page.
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        log.warning("could not load case %s: %s", case.id, e)
+        raise HTTPException(
+            status_code=502,
+            detail=f"could not read the source workbook for '{case.title}': {e}",
+        ) from e
 
 
 def _score_breakdown(s: Scored) -> dict[str, float]:
@@ -216,6 +232,144 @@ def api_cases() -> dict[str, Any]:
             }
             for c in CASES
         ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Content intake — workbooks in Drive, parsed and shown
+# ---------------------------------------------------------------------------
+
+def _auth_state() -> dict[str, Any]:
+    """Who is signed in, if anyone."""
+    state: dict[str, Any] = {"signed_in": False, "user": None, "configured": True}
+    try:
+        from demo.oauth import get_user_info, is_configured
+        state["configured"] = is_configured()
+        if state["configured"]:
+            state["user"] = get_user_info()
+            state["signed_in"] = state["user"] is not None
+    except Exception:  # noqa: BLE001
+        pass
+    return state
+
+
+def _intake_rows() -> list[dict[str, Any]]:
+    """The intake listing, one row per Drive workbook."""
+    from demo import intake
+
+    rows: list[dict[str, Any]] = []
+    try:
+        files = intake.list_drive_workbooks()
+    except Exception as e:  # noqa: BLE001
+        log.warning("intake listing failed: %s", e)
+        return rows
+    for f in files:
+        try:
+            parsed = intake.parse_drive_file(f)
+        except Exception as e:  # noqa: BLE001
+            log.warning("intake parse failed for %s: %s", f.name, e)
+            continue
+        d = f.to_dict()
+        d.update({
+            "format_id": parsed.format_id,
+            "format_label": parsed.format_label,
+            "total_rows": parsed.total_rows,
+            "qc_counts": parsed.qc_counts,
+            "error": parsed.error,
+            "project": parsed.project,
+        })
+        rows.append(d)
+    return rows
+
+
+@app.get("/intake", response_class=HTMLResponse)
+def intake_page(request: Request) -> HTMLResponse:
+    """The content page — Excel files from Drive, parsed and listed."""
+    auth = _auth_state()
+    rows = _intake_rows() if auth["signed_in"] else []
+    return templates.TemplateResponse(
+        request,
+        "intake.html",
+        {"auth": auth, "files": rows, "upload_error": None},
+    )
+
+
+@app.get("/content/{file_id}", response_class=HTMLResponse)
+def content_page(request: Request, file_id: str) -> HTMLResponse:
+    """The content of one workbook."""
+    from demo import intake
+
+    auth = _auth_state()
+    f = intake.find_file(file_id)
+    if f is None:
+        raise HTTPException(status_code=404, detail="file not found in the intake folders")
+    parsed = intake.parse_drive_file(f)
+    return templates.TemplateResponse(
+        request,
+        "content.html",
+        {
+            "auth": auth,
+            "file": f.to_dict(),
+            "parsed": parsed.to_dict(),
+            "shown_rows": 200,
+        },
+    )
+
+
+@app.post("/upload")
+async def upload(request: Request):
+    """Accept a workbook from the browser and put it in Drive /Intake/.
+
+    Everything enters through Drive on purpose: a file uploaded here and
+    a file dropped into the folder by hand are the same thing to the app,
+    and there is one code path afterwards.
+    """
+    form = await request.form()
+    upload = form.get("file")
+    if upload is None or not hasattr(upload, "filename") or not upload.filename:
+        return RedirectResponse("/intake", status_code=303)
+    name = Path(upload.filename).name
+    if not name.lower().endswith((".xlsx", ".xlsm", ".xls")):
+        return templates.TemplateResponse(
+            request,
+            "intake.html",
+            {
+                "auth": _auth_state(),
+                "files": _intake_rows(),
+                "upload_error": f"'{name}' is not an Excel workbook.",
+            },
+            status_code=400,
+        )
+    data = await upload.read()
+    try:
+        from demo.drive import upload_to_folder
+        info = upload_to_folder(name, data, "Intake")
+    except Exception as e:  # noqa: BLE001
+        log.warning("upload failed: %s", e)
+        return templates.TemplateResponse(
+            request,
+            "intake.html",
+            {
+                "auth": _auth_state(),
+                "files": _intake_rows(),
+                "upload_error": (
+                    f"Could not save to Drive: {e}. "
+                    "Sign in with Google and try again."
+                ),
+            },
+            status_code=400,
+        )
+    return RedirectResponse(f"/content/{info['id']}", status_code=303)
+
+
+@app.get("/api/intake", include_in_schema=False)
+def api_intake() -> dict[str, Any]:
+    """JSON view of the intake listing (for agents / MCP)."""
+    auth = _auth_state()
+    return {
+        "signed_in": auth["signed_in"],
+        "user": auth["user"],
+        "files": _intake_rows() if auth["signed_in"] else [],
     }
 
 

@@ -29,6 +29,7 @@
       </div>
     </div>
     <div class="console-head-right">
+      <a class="head-btn head-btn-secondary" href="/intake">Content</a>
       <a class="head-btn head-btn-secondary" href="/api/cases" target="_blank">JSON</a>
       <a class="head-btn head-btn-primary" href="/diag">Smoke test</a>
     </div>
@@ -75,6 +76,11 @@
           <div class="quick-title">QC check</div>
           <div class="quick-sub muted">Standing rules + flags · v0.2</div>
         </a>
+        <a class="quick-card" href="/intake">
+          <div class="quick-icon">📥</div>
+          <div class="quick-title">Content</div>
+          <div class="quick-sub muted">Excel in Drive, shown here</div>
+        </a>
         <a class="quick-card" href="#">
           <div class="quick-icon">📈</div>
           <div class="quick-title">RVD index</div>
@@ -99,7 +105,7 @@
               <div class="active-card-title">{{ c.title }}</div>
               <div class="active-card-addr">{{ c.address }} · {{ c.district }}</div>
               <div class="active-card-meta muted small">
-                Valued {{ c.valuation_date }} · {{ c.client }}
+                Valued {{ c.valuation_date }}{% if c.client %} · {{ c.client }}{% endif %}
               </div>
               {% if c.last_action %}
               <div class="active-card-action muted small">↳ {{ c.last_action }}</div>
@@ -118,7 +124,11 @@
       {% else %}
         <div class="console-empty">
           <span class="muted">No active cases.</span>
-          <span class="muted small">Add one in <code>demo/cases.py</code> to get started.</span>
+          <span class="muted small">
+            Add one in <code>demo/cases.py</code>, or drop a Memfus Wong
+            extract into <code>/Intake/</code> in your Drive — it becomes a
+            project on its own.
+          </span>
         </div>
       {% endif %}
     </section>
