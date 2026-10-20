@@ -76,25 +76,43 @@ def is_configured() -> bool:
 _SA_LAST_ERROR: Optional[str] = None
 
 
+def _sa_credentials():
+    """Build service-account credentials, handling BOTH forms of the env var.
+
+    Cloud Run mounts a secret and injects its CONTENT into the env var when
+    the var is declared as a secret reference, and a FILE PATH when it is
+    declared as a normal env var. The raw-JSON form starts with ``{``.
+    """
+    raw = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    if not raw:
+        raise RuntimeError("GOOGLE_APPLICATION_CREDENTIALS is not set")
+    import google.auth.transport.requests as tr
+    from google.oauth2 import service_account
+    if raw.lstrip().startswith("{"):
+        # Raw JSON content — parse it directly.
+        info = json.loads(raw)
+        creds = service_account.Credentials.from_service_account_info(
+            info, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+    else:
+        # A file path.
+        import google.auth
+        creds, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+    if not creds.valid:
+        creds.refresh(tr.Request())
+    return creds
+
+
 def _sa_access_token() -> Optional[str]:
     """Access token for the app's own service account, or None."""
     global _SA_LAST_ERROR
     _SA_LAST_ERROR = None
-    path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-    if not path:
-        _SA_LAST_ERROR = "GOOGLE_APPLICATION_CREDENTIALS is not set"
-        return None
     try:
-        import google.auth
-        import google.auth.transport.requests as tr
-        creds, _ = google.auth.default(
-            scopes=["https://www.googleapis.com/auth/cloud-platform"]
-        )
-        if not creds.valid:
-            creds.refresh(tr.Request())
-        return creds.token
+        return _sa_credentials().token
     except Exception as e:  # noqa: BLE001
-        _SA_LAST_ERROR = f"{type(e).__name__}: {e}"
+        _SA_LAST_ERROR = f"{type(e).__name__}: {str(e)[:300]}"
         log.warning("service-account auth unavailable: %s", _SA_LAST_ERROR)
         return None
 
@@ -210,14 +228,17 @@ def secret_store_status() -> dict:
     cred_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     if cred_path:
         p = Path(cred_path)
-        out["sa_credentials_path"] = cred_path
-        out["sa_credentials_file_exists"] = p.exists()
-        if p.exists():
+        raw = cred_path.lstrip()
+        out["sa_credentials_form"] = "raw-json" if raw.startswith("{") else "file-path"
+        if raw.startswith("{"):
             try:
-                head = p.read_text()[:200]
-                out["sa_credentials_head"] = head.replace("\n", " ")[:160]
+                info = json.loads(cred_path)
+                out["sa_client_email"] = info.get("client_email")
+                out["sa_key_id"] = info.get("private_key_id")
             except Exception as e:  # noqa: BLE001
-                out["sa_credentials_read_error"] = str(e)[:160]
+                out["sa_credentials_parse_error"] = str(e)[:120]
+        else:
+            out["sa_credentials_file_exists"] = p.exists()
     tok = _sa_access_token()
     out["sa_access_token"] = bool(tok)
     out["sa_error"] = _SA_LAST_ERROR
