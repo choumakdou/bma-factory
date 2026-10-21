@@ -502,3 +502,9 @@ class TestConsentClock(unittest.TestCase):
         with mock.patch.object(oauth, "_signed_in_at", None):
             oauth._read_signed_in_at('{"expiry": 1780272000}')
             self.assertEqual(oauth._signed_in_at, 1780272000 - 3600)
+
+    def test_an_iso_expiry_string_is_understood(self):
+        from demo.oauth import _as_epoch
+        self.assertIsNotNone(_as_epoch("2026-10-21T02:19:50.960766Z"))
+        self.assertIsNone(_as_epoch("not a date"))
+        self.assertEqual(_as_epoch(1780000000), 1780000000.0)

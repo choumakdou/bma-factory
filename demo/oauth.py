@@ -649,6 +649,20 @@ def token_expired() -> bool:
     return _token_expired
 
 
+def _as_epoch(value: Any) -> Optional[float]:
+    """An epoch seconds from a number or an ISO-8601 string."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    if isinstance(value, str) and value.strip():
+        text = value.strip().replace("Z", "+00:00")
+        try:
+            from datetime import datetime as _dt
+            return _dt.fromisoformat(text).timestamp()
+        except Exception:  # noqa: BLE001
+            return None
+    return None
+
+
 def _read_signed_in_at(blob: str) -> None:
     global _signed_in_at
     try:
@@ -662,9 +676,11 @@ def _read_signed_in_at(blob: str) -> None:
     # A token stored before we started recording the consent time. The
     # access token expires an hour after it is issued, so that is close
     # enough to tell the valuer when to expect the seven-day expiry.
+    # ``expiry`` is an ISO string in the stored blob, not a number.
     exp = info.get("expiry")
-    if isinstance(exp, (int, float)) and exp > 1_600_000_000:
-        _signed_in_at = float(exp) - 3600
+    when = _as_epoch(exp)
+    if when and when > 1_600_000_000:
+        _signed_in_at = when - 3600
         log.info("derived the sign-in time from the token expiry")
 
 
