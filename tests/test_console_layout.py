@@ -304,5 +304,141 @@ class TestBrochureTemplateRendersEvidenceGallery(unittest.TestCase):
         self.assertIn("/brochure/evidence/file/", text)
 
 
+
+class TestScreenshotFoldering(unittest.TestCase):
+    """Screenshots are filed under a per-round folder, not a flat dump.
+
+    Path: bma-factory/Sales Brochure Review/<Development>/<YYYYMM>/
+    — parallel to Valuation, because a brochure review is not a valuation.
+    """
+
+    def _round(self, **kw):
+        from demo.brochure import Development
+        d = Development(id="la-aldea", name="La Aldea", dev_id="7825")
+        r = d.open_round(kw.pop("opened", __import__("datetime").date(2026, 8, 1)))
+        for k, v in kw.items():
+            setattr(r, k, v)
+        return d, r
+
+    def test_the_root_is_a_sibling_of_valuation_not_a_child(self):
+        from demo import brochure as B
+        from demo.drive import DRIVE_ROOT_PATH
+        self.assertEqual(DRIVE_ROOT_PATH, "bma-factory/Valuation")
+        self.assertEqual(B.SCREENSHOTS_ROOT, "bma-factory/Sales Brochure Review")
+        # parallel, not nested: Valuation is not a prefix of it
+        self.assertFalse(B.SCREENSHOTS_ROOT.startswith(DRIVE_ROOT_PATH))
+
+    def test_the_path_is_development_then_month(self):
+        from demo.brochure import screenshot_path
+        d, r = self._round(last_actual="2026-08-07", target="2026-11-06")
+        self.assertEqual(
+            screenshot_path(d, r),
+            "bma-factory/Sales Brochure Review/La Aldea/202611",
+        )
+
+    def test_the_month_is_the_rounds_target_month(self):
+        from demo.brochure import round_month
+        _, r = self._round(last_actual="2026-08-07", target="2026-11-06")
+        self.assertEqual(round_month(r), "202611")
+
+    def test_the_month_falls_back_to_the_deadline(self):
+        """No agreed target yet — the deadline still names the month."""
+        from demo.brochure import round_month
+        d = __import__("demo.brochure", fromlist=["Development"]).Development(
+            id="x", name="X")
+        r = d.open_round(__import__("datetime").date(2026, 8, 1))
+        r.last_actual = "2026-08-07"
+        # deadline is derived from last_actual: 07/11/2026
+        self.assertEqual(round_month(r), "202611")
+
+    def test_a_round_with_no_dates_at_all_still_gets_a_folder(self):
+        """Never a folder literally called 'None'."""
+        from demo.brochure import round_month, screenshot_path
+        d = __import__("demo.brochure", fromlist=["Development"]).Development(
+            id="x", name="X")
+        r = d.open_round(__import__("datetime").date(2026, 8, 1))
+        m = round_month(r)
+        self.assertRegex(m, r"^\d{6}$")
+        self.assertIn(m, screenshot_path(d, r))
+
+    def test_the_development_name_is_used_not_the_slug(self):
+        """The folder is something Bobby opens in the Drive sidebar;
+        'la-aldea' tells him nothing that 'La Aldea' does not."""
+        from demo.brochure import screenshot_path
+        d, r = self._round(last_actual="2026-08-07", target="2026-11-06")
+        self.assertIn("/La Aldea/", screenshot_path(d, r))
+        self.assertNotIn("/la-aldea/", screenshot_path(d, r))
+
+    def test_drive_forbidden_characters_are_stripped(self):
+        from demo.brochure import screenshot_path
+        from demo.brochure import Development
+        from datetime import date as _d
+        d = Development(id="x", name="Foo/Bar: Baz*Qux")
+        r = d.open_round(_d(2026, 8, 1))
+        p = screenshot_path(d, r)
+        # the segment between the root and the month must be a legal
+        # Drive folder name — no / : * ? " < > |
+        name_seg = p.split("/", 3)[3].rsplit("/", 1)[0]
+        for bad in '/:*?"<>|':
+            self.assertNotIn(bad, name_seg, p)
+        self.assertEqual(p,
+                         "bma-factory/Sales Brochure Review/Foo-Bar- Baz-Qux/202608")
+
+    def test_a_development_with_no_name_does_not_produce_an_empty_folder(self):
+        from demo.brochure import screenshot_path, Development
+        from datetime import date as _d
+        d = Development(id="abc123", name="")
+        r = d.open_round(_d(2026, 8, 1))
+        self.assertIn("/abc123/", screenshot_path(d, r))
+
+    def test_each_round_gets_its_own_month(self):
+        from demo.brochure import screenshot_path
+        d, r1 = self._round(last_actual="2026-08-07", target="2026-11-06")
+        r2 = d.open_round(__import__("datetime").date(2026, 11, 8))
+        r2.target = "2027-02-05"
+        self.assertTrue(screenshot_path(d, r1).endswith("/202611"))
+        self.assertTrue(screenshot_path(d, r2).endswith("/202702"))
+
+
+class TestMimeGuess(unittest.TestCase):
+    """Drive needs a real MIME type to render a thumbnail."""
+
+    def test_images_get_image_types(self):
+        from demo.app import _guess_mime
+        self.assertEqual(_guess_mime("a.png"), "image/png")
+        self.assertEqual(_guess_mime("b.JPG"), "image/jpeg")
+        self.assertEqual(_guess_mime("c.jpeg"), "image/jpeg")
+        self.assertEqual(_guess_mime("d.pdf"), "application/pdf")
+        self.assertEqual(_guess_mime("e.heic"), "image/heic")
+
+    def test_an_unknown_or_missing_extension_defaults_to_png(self):
+        from demo.app import _guess_mime
+        self.assertEqual(_guess_mime("noext"), "image/png")
+        self.assertEqual(_guess_mime(""), "image/png")
+
+    def test_it_is_never_octet_stream(self):
+        """The old upload used application/octet-stream, which Drive
+        renders as an unviewable blob rather than a thumbnail."""
+        from demo.app import _guess_mime
+        for name in ("a.png", "b.jpg", "c.pdf", "weird.xyz", ""):
+            self.assertNotEqual(_guess_mime(name), "application/octet-stream")
+
+
+class TestFolderCreationIsNotOnPageLoad(unittest.TestCase):
+    """Viewing a development must never write to Drive."""
+
+    def test_reading_the_folder_link_is_find_only(self):
+        import inspect
+        from demo.app import _folder_link
+        src = inspect.getsource(_folder_link)
+        self.assertIn("create=False", src)
+
+    def test_creating_the_folder_is_its_own_post_route(self):
+        from demo.app import app
+        posts = {r.path for r in app.routes
+                 if hasattr(r, "methods") and "POST" in (r.methods or set())}
+        self.assertIn("/brochure/{dev_id}/folder", posts)
+
+
 if __name__ == "__main__":
     unittest.main()

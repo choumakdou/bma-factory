@@ -219,9 +219,9 @@
                 </div>
 
                 {# ---- inline screenshots: thumbnails rendered straight from Drive ---- #}
+                {% set shots = item.evidence | selectattr('file_id') | list %}
                 <div class="evidence-screenshots">
-                  {% for e in item.evidence %}
-                    {% if e.file_id %}
+                  {% for e in shots %}
                   <a class="evidence-shot" href="https://drive.google.com/file/d/{{ e.file_id }}/view"
                      target="_blank" rel="noopener" title="{{ e.ref }} — {{ e.title or e.file_name }}">
                     <img src="/brochure/evidence/file/{{ e.file_id }}"
@@ -233,9 +233,17 @@
                       {% if e.title %}<div class="muted small">{{ e.title }}</div>{% endif %}
                     </div>
                   </a>
-                    {% endif %}
                   {% endfor %}
                 </div>
+
+                {% if item.evidence and not shots %}
+                <p class="muted small no-shots">
+                  {{ item.evidence_count }} row{{ '' if item.evidence_count == 1 else 's' }} recorded,
+                  but no picture attached — so there is nothing to look at,
+                  only the reference. Attach the screenshot in the Proof
+                  column and it is filed under <code>{{ shots_path }}</code>.
+                </p>
+                {% endif %}
 
                 <table class="content-table evidence-table">
                   <thead>
@@ -316,6 +324,17 @@
                 <span class="muted small">last checked {{ item.checked_at[:16] }}</span>
                 {% endif %}
               </p>
+
+              {# Where this round's files are filed — under the round, not a flat dump. #}
+              <p class="muted small shot-path">
+                Screenshots for round {{ round.number }} are filed in
+                <code>{{ shots_path }}</code>
+                {% if shots_link %}
+                  · <a class="dl-link" href="{{ shots_link }}" target="_blank" rel="noopener">open in Drive →</a>
+                {% else %}
+                  · <span class="muted">folder not created yet</span>
+                {% endif %}
+              </p>
             </form>
           </div>
           {% endfor %}
@@ -339,6 +358,18 @@
         Opening a round carries the last round's actual upload date and
         the item versions forward. The new round's actual upload date
         starts empty, and it is what the next round is worked out from.
+      </p>
+      <p class="muted small">
+        Each round's screenshots go to their own folder —
+        <code>{{ shots_path }}</code>
+        — so a file always says which review it belongs to.
+        {% if not shots_link %}
+        <form method="post" action="/brochure/{{ dev.id }}/folder" style="display:inline">
+          <button class="gen-btn gen-btn-secondary" type="submit">Create this folder in Drive</button>
+        </form>
+        {% else %}
+        <a class="dl-link" href="{{ shots_link }}" target="_blank" rel="noopener">Open in Drive →</a>
+        {% endif %}
       </p>
       <table class="content-table">
         <thead>

@@ -44,6 +44,7 @@ import calendar
 import io
 import json
 import logging
+import os
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -55,6 +56,13 @@ log = logging.getLogger("bma-factory.brochure")
 #: Where the reviews live, relative to the app's root path.
 FOLDER = "SalesBrochure"
 DATA_FILE = "developments.json"
+
+#: The screenshots and the review paperwork for every development. This
+#: is deliberately NOT under the Valuation root — a brochure review is
+#: not a valuation — so it is a sibling of `bma-factory/Valuation`.
+SCREENSHOTS_ROOT = os.environ.get(
+    "VF_BROCHURE_SCREENSHOT_PATH", "bma-factory/Sales Brochure Review",
+)
 
 #: How often a review round repeats. Three months, because the
 #: Ordinance says so.
@@ -538,6 +546,47 @@ def slugify(name: str) -> str:
 def _folder_path() -> str:
     from demo.drive import DRIVE_ROOT_PATH
     return f"{DRIVE_ROOT_PATH}/{FOLDER}"
+
+
+def round_month(rnd: Any) -> str:
+    """The ``YYYYMM`` a round's screenshots are filed under.
+
+    Named after the round's TARGET month — the month the brochure is
+    due to be re-uploaded — because that is the month the valuer is
+    working in when the screenshot is taken. La Aldea's round 1 has a
+    target of 06/11/2026, so its screenshots live in ``202611``.
+
+    Falls back to the deadline, then to the date the round was opened,
+    so a folder name is always derivable rather than ever blank.
+    """
+    for value in (
+        getattr(rnd, "target", ""),
+        getattr(rnd, "deadline", ""),
+        getattr(rnd, "opened", ""),
+    ):
+        d = parse_date(value) if value else None
+        if d:
+            return f"{d.year:04d}{d.month:02d}"
+    # No date at all on the round — fall back to today rather than
+    # filing evidence under a folder called "None".
+    today = date.today()
+    return f"{today.year:04d}{today.month:02d}"
+
+
+def screenshot_path(dev: Any, rnd: Any) -> str:
+    """Drive path for one round's screenshots.
+
+    ``bma-factory/Sales Brochure Review/<Development name>/<YYYYMM>``
+
+    The development NAME, not the id — the folder is something Bobby
+    opens in the Drive sidebar, and `la-aldea` tells him nothing that
+    `La Aldea` does not.
+    """
+    name = str(getattr(dev, "name", "") or "").strip() or str(
+        getattr(dev, "id", "") or "Unnamed")
+    # Drive forbids these in a folder name.
+    safe = re.sub(r'[\\/:*?"<>|]', "-", name).strip() or "Unnamed"
+    return f"{SCREENSHOTS_ROOT}/{safe}/{round_month(rnd)}"
 
 
 def load_developments() -> list[Development]:

@@ -970,3 +970,22 @@ body.console {
   font-size: .78rem;
   color: #1a237e;
 }
+
+/* "3 rows recorded but no picture attached" — the case where the
+   reference is on file but there is nothing to actually look at. */
+.no-shots {
+  margin: .3rem 0 .5rem;
+  padding: .45rem .6rem;
+  background: #fff8e1;
+  border-left: 3px solid #f9a825;
+  border-radius: 2px;
+}
+.no-shots code { font-size: .72rem; }
+
+/* Where this round's screenshots are filed in Drive. */
+.shot-path {
+  margin-top: .5rem;
+  padding-top: .5rem;
+  border-top: 1px dashed var(--line);
+}
+.shot-path code { font-size: .72rem; }

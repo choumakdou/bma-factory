@@ -25,6 +25,7 @@ from __future__ import annotations
 import io
 import sys
 import logging
+import re
 import traceback
 from datetime import date, datetime
 from urllib.parse import quote_plus
@@ -592,6 +593,12 @@ def brochure_development(request: Request, dev_id: str) -> HTMLResponse:
                 "note": rnd.stage0_note,
             })
 
+    # Where this round's screenshots live in Drive. Read-only lookup —
+    # the folder is created when a screenshot is actually uploaded, or
+    # via POST /brochure/{dev_id}/folder. A page load must never write.
+    shot_path = B.screenshot_path(dev, rnd)
+    shot_link = _folder_link(shot_path)
+
     return templates.TemplateResponse(
         request,
         "brochure_development.html",
@@ -616,8 +623,47 @@ def brochure_development(request: Request, dev_id: str) -> HTMLResponse:
             "sources": check_all(dev),
             "today": date.today(),
             "srpe_link": _srpe_link(dev.dev_id),
+            "shots_path": shot_path,
+            "shots_link": shot_link,
         },
     )
+
+
+def _folder_link(path: str) -> str:
+    """A Drive link to a folder by path, or '' when it does not exist."""
+    try:
+        from demo.drive import resolve_path
+        fid = resolve_path(path, create=False)
+        return f"https://drive.google.com/drive/folders/{fid}" if fid else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+@app.post("/brochure/{dev_id}/folder")
+async def brochure_make_folder(request: Request, dev_id: str):
+    """Create this round's screenshot folder in Drive.
+
+    Separate from the page load on purpose: viewing a development must
+    never write to Drive, or every page view would leave a folder
+    behind.
+    """
+    from demo import brochure as B
+    devs = B.load_developments()
+    dev = next((d for d in devs if d.id == dev_id), None)
+    if dev is None:
+        raise HTTPException(status_code=404, detail="no such development")
+    rnd = dev.current_round or dev.open_round(date.today())
+    path = B.screenshot_path(dev, rnd)
+    try:
+        from demo.drive import resolve_path
+        resolve_path(path)
+    except Exception as e:  # noqa: BLE001
+        return RedirectResponse(
+            f"/brochure/{dev_id}?error=Could+not+create+the+folder%3A+{e}",
+            status_code=303)
+    return RedirectResponse(
+        f"/brochure/{dev_id}?saved={quote_plus('Folder ready in Drive')}",
+        status_code=303)
 
 
 def _srpe_link(dev_id: str) -> str:
@@ -681,7 +727,8 @@ async def brochure_save_round(request: Request, dev_id: str, number: int):
         state["checked_at"] = datetime.now().isoformat(timespec="seconds")
         state["checked_by"] = str(form.get("checked_by") or "").strip()
 
-        evidence = await _read_evidence(form, item, dev, state.get("evidence") or [])
+        evidence = await _read_evidence(
+            form, item, dev, rnd, state.get("evidence") or [])
         state["evidence"] = evidence
         # The source version is the latest piece of evidence. Kept as a
         # field as well, so an older record still reads sensibly.
@@ -720,6 +767,7 @@ async def _read_evidence(
     form: Any,
     item: Any,
     dev: Any,
+    rnd: Any,
     existing: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Read the evidence rows off the form, and attach any screenshots.
@@ -768,7 +816,7 @@ async def _read_evidence(
             name = getattr(upload, "filename", "") or "evidence"
             data = await _read_upload(upload)
             if data:
-                saved = _store_evidence_file(dev, item, name, data)
+                saved = _store_evidence_file(dev, rnd, item, name, data)
                 if saved:
                     row["file_id"] = saved.get("id", "")
                     row["file_name"] = saved.get("name", name)
@@ -792,29 +840,70 @@ async def _read_upload(upload: Any) -> bytes:
 
 
 def _store_evidence_file(
-    dev: Any, item: Any, name: str, data: bytes,
+    dev: Any, rnd: Any, item: Any, name: str, data: bytes,
 ) -> dict[str, Any] | None:
-    """Put a screenshot in the development's own folder in Drive."""
+    """Put a screenshot in that round's own folder in Drive.
+
+    ``bma-factory/Sales Brochure Review/<Development>/<YYYYMM>/`` — the
+    month is the round's target month, so a screenshot is filed under
+    the review it belongs to rather than in one flat evidence dump.
+    """
     try:
-        from demo.drive import DRIVE_ROOT_PATH, resolve_path
+        from demo import brochure as B
+        from demo.drive import resolve_path
         from demo.oauth import get_drive
         from googleapiclient.http import MediaIoBaseUpload
         import io as _io
 
-        folder = resolve_path(
-            f"{DRIVE_ROOT_PATH}/SalesBrochure/{dev.id}/Evidence")
+        path = B.screenshot_path(dev, rnd)
+        folder = resolve_path(path)
         drive = get_drive()
+        # Name the file after what it proves, so the folder is readable
+        # without opening anything: the sheet ref, then a counter.
+        ref = str(getattr(item, "id", "") or "evidence")
+        safe_ref = re.sub(r"[^A-Za-z0-9._-]+", "-", ref).strip("-") or "evidence"
+        existing = _evidence_names_in(folder, safe_ref)
+        final = f"{safe_ref}-{existing + 1}.png" if existing else f"{safe_ref}.png"
         media = MediaIoBaseUpload(
-            _io.BytesIO(data), mimetype="application/octet-stream", resumable=False)
+            _io.BytesIO(data), mimetype=_guess_mime(name), resumable=False)
         f = drive.files().create(
-            body={"name": name, "parents": [folder]},
+            body={"name": final, "parents": [folder]},
             media_body=media,
             fields="id,name,webViewLink", supportsAllDrives=True,
         ).execute()
+        f["path"] = path
         return f
     except Exception as e:  # noqa: BLE001
         log.warning("could not store the evidence file: %s", e)
         return None
+
+
+def _guess_mime(name: str) -> str:
+    """The MIME type from the extension, defaulting to an image.
+
+    Drive needs a real type to render a thumbnail, and guessing
+    octet-stream is why the earlier uploads showed as unviewable.
+    """
+    ext = str(name or "").rsplit(".", 1)[-1].lower() if "." in str(name or "") else ""
+    return {
+        "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+        "gif": "image/gif", "webp": "image/webp", "heic": "image/heic",
+        "pdf": "application/pdf",
+    }.get(ext, "image/png")
+
+
+def _evidence_names_in(folder_id: str, prefix: str) -> int:
+    """How many files already start with this prefix. 0 if none."""
+    try:
+        from demo.oauth import get_drive
+        drive = get_drive()
+        r = drive.files().list(
+            q=f"'{folder_id}' in parents and name contains '{prefix}' and trashed=false",
+            fields="files(id,name)", pageSize=50, supportsAllDrives=True,
+        ).execute()
+        return len(r.get("files", []))
+    except Exception:  # noqa: BLE001
+        return 0
 
 
 # Minimal in-memory cache for file metadata looked up on the proxy route.
