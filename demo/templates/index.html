@@ -28,17 +28,9 @@
         {% endif %}
       </div>
     </div>
-    <div class="console-head-right">
-      <a class="head-tab head-tab-primary {% if request.url.path == '/' %}is-active{% endif %}"
-         href="/">Property Valuation</a>
-      <a class="head-tab head-tab-primary {% if request.url.path.startswith('/brochure') %}is-active{% endif %}"
-         href="/brochure">Sales Brochure Review</a>
-      <span class="head-sep"></span>
-      <a class="head-btn head-btn-secondary" href="/intake">Content</a>
-      <a class="head-btn head-btn-secondary" href="/api/cases" target="_blank">JSON</a>
-      <a class="head-btn head-btn-primary" href="/diag">Smoke test</a>
-    </div>
   </header>
+
+  {% include "_nav.html" %}
 
   {% if not auth.configured %}
   <div class="console-banner console-banner-warn">

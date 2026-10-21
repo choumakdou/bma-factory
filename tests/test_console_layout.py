@@ -23,53 +23,69 @@ os.environ["VF_OUTPUT_DIR"] = str(_TMP / "outputs")
 
 
 class TestHeaderTabs(unittest.TestCase):
-    """The two primary tabs sit in the top header and are visibly tabs."""
+    """The two primary tabs sit in a site nav on every page."""
 
-    def test_the_home_page_has_the_two_primary_tabs(self):
+    #: every page a valuer actually visits
+    PAGES = ["/", "/intake", "/intake/rules", "/brochure", "/brochure/new",
+             "/case/bel-air-m2"]
+
+    def test_the_nav_is_on_every_page(self):
         from fastapi.testclient import TestClient
         from demo.app import app
         c = TestClient(app)
-        r = c.get("/")
-        self.assertEqual(r.status_code, 200)
-        body = r.text
-        self.assertIn("BMA Factory", body)
-        self.assertIn('class="head-tab head-tab-primary', body)
-        self.assertIn('href="/">Property Valuation</a>', body)
-        self.assertIn('href="/brochure">Sales Brochure Review</a>', body)
+        for path in self.PAGES:
+            r = c.get(path)
+            self.assertEqual(r.status_code, 200, path)
+            self.assertIn('class="nav-bar"', r.text, f"no nav on {path}")
+            self.assertIn(">Property Valuation</a>", r.text, path)
+            self.assertIn(">Sales Brochure Review</a>", r.text, path)
 
-    def test_exactly_one_tab_is_active_when_on_the_home(self):
+    def test_both_tabs_are_present_everywhere(self):
         from fastapi.testclient import TestClient
         from demo.app import app
         c = TestClient(app)
-        r = c.get("/")
-        body = r.text
-        # exactly one of the two tabs is marked active when on /
-        self.assertEqual(body.count("head-tab-primary is-active"), 1)
-        # the home tab is the active one, the brochure tab is not
-        pv_pos = body.find('href="/">Property Valuation</a>')
-        is_active_pos = body.find('head-tab-primary is-active')
-        brochure_pos = body.find('href="/brochure">Sales Brochure Review</a>')
-        self.assertGreater(pv_pos, 0)
-        self.assertLess(is_active_pos, pv_pos)
-        # the brochure tab has 'head-tab-primary "' (with trailing space,
-        # meaning NOT is-active), before its text
-        pre_brochure = body[is_active_pos:brochure_pos]
-        # no second "is-active" between them
-        self.assertNotIn("is-active", pre_brochure[len("head-tab-primary is-active"):])
+        for path in self.PAGES:
+            r = c.get(path)
+            # exactly the two workflow tabs, not more
+            self.assertEqual(r.text.count('class="nav-tab'), 2, path)
+            # and both hrefs are reachable from every page
+            self.assertIn('href="/brochure"', r.text, path)
 
-    def test_separators_separate_the_primary_tabs_from_the_utility_buttons(self):
+    def test_the_active_tab_follows_the_page(self):
         from fastapi.testclient import TestClient
         from demo.app import app
         c = TestClient(app)
-        r = c.get("/")
-        body = r.text
-        self.assertIn('<span class="head-sep"></span>', body)
-        tabs_pos = body.find("Sales Brochure Review</a>")
-        sep_pos = body.find('<span class="head-sep"></span>', tabs_pos)
-        content_pos = body.find('href="/intake">Content</a>', sep_pos)
-        self.assertGreater(tabs_pos, 0)
-        self.assertGreater(sep_pos, tabs_pos)
-        self.assertGreater(content_pos, sep_pos)
+        expected = {
+            "/": "Property Valuation",
+            "/brochure": "Sales Brochure Review",
+            "/case/bel-air-m2": "Property Valuation",
+            "/intake": "Content",
+        }
+        for path, active_label in expected.items():
+            body = c.get(path).text
+            start = body.find('<nav class="nav-bar"')
+            nav = body[start:body.find("</nav>", start)]
+            # find the anchor whose class carries is-active
+            import re
+            hit = re.findall(
+                r'<a class="nav-(?:tab|btn)[^"]*is-active[^"]*"\s*href="([^"]+)"[^>]*>\s*([^<]+?)\s*</a>',
+                nav)
+            self.assertEqual(len(hit), 1, f"{path}: expected one active item, got {hit}")
+            self.assertEqual(hit[0][1].strip(), active_label, path)
+
+    def test_the_nav_wraps_instead_of_overflowing(self):
+        """The earlier version sat inside the page header with
+        `flex: 0 0 auto` and no wrap, so below ~910px the tabs were
+        pushed off screen. The nav must wrap."""
+        from pathlib import Path
+        css = (Path(__file__).resolve().parents[1] / "demo" / "static"
+               / "style.css").read_text()
+        block = css[css.find(".nav-bar {"):css.find(".nav-spacer")]
+        self.assertIn("flex-wrap: wrap", block)
+        # and there is a narrow-viewport rule for the two long labels
+        self.assertIn("@media (max-width: 860px)", css)
+        # the old overflow-prone selector must be gone
+        self.assertNotIn(".head-tab-primary", css)
 
 
 class TestQuickActionsUnderPV(unittest.TestCase):

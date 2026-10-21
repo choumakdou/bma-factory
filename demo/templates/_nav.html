@@ -1,0 +1,16 @@
+{# Site navigation — Property Valuation and Sales Brochure Review are the
+   two top-level workflows, so they get top-level nav on every page, not
+   just the console. `request.url` is absent when the template is rendered
+   outside a request (unit tests), hence the guard. #}
+{% set path = request.url.path if request.url else '' %}
+<nav class="nav-bar" aria-label="Main">
+  <a class="nav-tab {% if not path or path == '/' or path.startswith('/case') %}is-active{% endif %}"
+     href="/">Property Valuation</a>
+  <a class="nav-tab {% if path.startswith('/brochure') %}is-active{% endif %}"
+     href="/brochure">Sales Brochure Review</a>
+  <span class="nav-spacer"></span>
+  <a class="nav-btn {% if path.startswith('/intake') or path.startswith('/content') %}is-active{% endif %}"
+     href="/intake">Content</a>
+  <a class="nav-btn" href="/api/cases" target="_blank">JSON</a>
+  <a class="nav-btn" href="/diag">Smoke test</a>
+</nav>

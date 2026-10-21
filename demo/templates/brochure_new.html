@@ -19,6 +19,8 @@
     </div>
   </header>
 
+  {% include "_nav.html" %}
+
   <main class="case-main">
     {% if request.query_params.get('error') %}
     <section class="card" style="border-left:3px solid #c5221f">

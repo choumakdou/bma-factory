@@ -281,41 +281,57 @@ body.console {
 }
 .head-btn-secondary:hover { background: rgba(255,255,255,0.18); text-decoration: none; }
 
-/* Primary tabs in the header — the two top-level workflows. */
-.head-tab {
+/* ------------------------------------------------------------------
+   Site nav — the two top-level workflows, on every page.
+   It wraps rather than overflowing: the previous version sat inside
+   the page header with `flex: 0 0 auto` and no wrap, so on any
+   viewport narrower than ~910px the right-hand group was pushed off
+   screen and the tabs simply vanished.
+   ------------------------------------------------------------------ */
+.nav-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 24px;
+  background: var(--brand-2);
+  border-bottom: 3px solid var(--accent);
+  box-sizing: border-box;
+}
+.nav-spacer { flex: 1 1 auto; min-width: 0; }
+
+.nav-tab,
+.nav-btn {
   display: inline-flex;
   align-items: center;
+  white-space: nowrap;
+  padding: 10px 16px;
   font-size: 13px;
   font-weight: 700;
-  letter-spacing: 0.3px;
-  padding: 7px 14px;
-  border-radius: 3px 3px 0 0;
-  color: rgba(255,255,255,0.7);
-  text-transform: none;
-  margin-bottom: -1px;
+  letter-spacing: 0.2px;
+  color: rgba(255,255,255,0.72);
   border-bottom: 3px solid transparent;
+  text-decoration: none;
 }
-.head-tab:hover {
-  background: rgba(255,255,255,0.06);
+.nav-tab:hover,
+.nav-btn:hover {
+  background: rgba(255,255,255,0.08);
   color: #fff;
   text-decoration: none;
 }
-.head-tab-primary.is-active {
-  background: rgba(255,255,255,0.1);
+.nav-tab.is-active {
   color: #fff;
+  background: rgba(255,255,255,0.08);
   border-bottom-color: var(--accent);
 }
-.head-sep {
-  display: inline-block;
-  width: 1px;
-  height: 22px;
-  background: rgba(255,255,255,0.25);
-  margin: 0 4px;
-}
+.nav-btn.is-active { color: #fff; }
 
-/* PV section heading on the home page. */
-.console-section-title {
-  margin: 0;
+/* On a narrow window the tabs get the full row and the small utility
+   buttons drop to a second line, rather than either being clipped. */
+@media (max-width: 860px) {
+  .nav-bar { padding: 0 12px; }
+  .nav-tab, .nav-btn { padding: 9px 11px; font-size: 12.5px; }
+  .nav-spacer { flex-basis: 100%; height: 0; }
 }
 
 .console-main { max-width: 1200px; margin: 24px auto; padding: 0 24px; display: flex; flex-direction: column; gap: 20px; }
