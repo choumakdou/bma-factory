@@ -616,14 +616,27 @@ async def brochure_save_round(request: Request, dev_id: str, number: int):
 
     elif action == "item":
         item_id = str(form.get("item_id") or "")
-        if item_id not in {i.id for i in B.CHECK_ITEMS}:
+        item = next((i for i in B.CHECK_ITEMS if i.id == item_id), None)
+        if item is None:
             raise HTTPException(status_code=400, detail="unknown item")
         state = dict(rnd.items.get(item_id) or {})
         state["brochure_version"] = str(form.get("brochure_version") or "").strip()
-        state["source_version"] = str(form.get("source_version") or "").strip()
         state["note"] = str(form.get("note") or "").strip()
         state["checked_at"] = datetime.now().isoformat(timespec="seconds")
         state["checked_by"] = str(form.get("checked_by") or "").strip()
+
+        evidence = await _read_evidence(form, item, dev, state.get("evidence") or [])
+        state["evidence"] = evidence
+        # The source version is the latest piece of evidence. Kept as a
+        # field as well, so an older record still reads sensibly.
+        dated = [e for e in evidence if e.get("date")]
+        if dated:
+            state["source_version"] = max(
+                dated, key=lambda e: e["date"]
+            )["date"]
+        else:
+            state["source_version"] = ""
+
         if str(form.get("action_flag") or "") == "brochure_updated":
             # The brochure has been re-issued with the new version, so
             # that is what it now carries.
@@ -645,6 +658,107 @@ async def brochure_save_round(request: Request, dev_id: str, number: int):
             f"/brochure/{dev_id}?error=Could+not+save%3A+{detail}", status_code=303)
     return RedirectResponse(
         f"/brochure/{dev_id}?saved={quote_plus(message)}#stage-{action}", status_code=303)
+
+
+async def _read_evidence(
+    form: Any,
+    item: Any,
+    dev: Any,
+    existing: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Read the evidence rows off the form, and attach any screenshots.
+
+    The rows are parallel lists — ``ev_ref``, ``ev_title``, ``ev_date``
+    and ``ev_file`` — so row *i* of each belongs together. A row with
+    nothing in it is dropped; a row with a file but no text keeps the
+    file, because the picture is the evidence.
+    """
+    def _list(name: str) -> list[Any]:
+        v = form.getlist(name)
+        return list(v) if isinstance(v, list) else ([v] if v else [])
+
+    refs = _list("ev_ref")
+    titles = _list("ev_title")
+    dates = _list("ev_date")
+    files = _list("ev_file")
+
+    # The evidence already on file keeps its screenshot, matched by row.
+    prior = list(existing or [])
+    out: list[dict[str, Any]] = []
+    for i in range(max(len(refs), len(titles), len(dates), len(files))):
+        ref = str(refs[i] or "").strip() if i < len(refs) else ""
+        title = str(titles[i] or "").strip() if i < len(titles) else ""
+        date = str(dates[i] or "").strip() if i < len(dates) else ""
+        upload = files[i] if i < len(files) else None
+        has_file = hasattr(upload, "filename") and bool(getattr(upload, "filename", ""))
+
+        if not (ref or title or date or has_file):
+            continue
+
+        row = {
+            "ref": ref,
+            "title": title,
+            "date": date,
+            "kind": item.evidence_kind,
+            "file_id": "",
+            "file_name": "",
+        }
+        # Keep the screenshot already attached to this row.
+        if i < len(prior) and prior[i].get("file_id"):
+            row["file_id"] = prior[i]["file_id"]
+            row["file_name"] = prior[i].get("file_name", "")
+
+        if has_file:
+            name = getattr(upload, "filename", "") or "evidence"
+            data = await _read_upload(upload)
+            if data:
+                saved = _store_evidence_file(dev, item, name, data)
+                if saved:
+                    row["file_id"] = saved.get("id", "")
+                    row["file_name"] = saved.get("name", name)
+        out.append(row)
+    return out
+
+
+async def _read_upload(upload: Any) -> bytes:
+    """The bytes of an uploaded file, or nothing."""
+    try:
+        reader = getattr(upload, "read", None)
+        if reader is None:
+            return b""
+        data = reader()
+        if hasattr(data, "__await__"):
+            data = await data
+        return data or b""
+    except Exception as e:  # noqa: BLE001
+        log.warning("could not read the uploaded evidence: %s", e)
+        return b""
+
+
+def _store_evidence_file(
+    dev: Any, item: Any, name: str, data: bytes,
+) -> dict[str, Any] | None:
+    """Put a screenshot in the development's own folder in Drive."""
+    try:
+        from demo.drive import DRIVE_ROOT_PATH, resolve_path
+        from demo.oauth import get_drive
+        from googleapiclient.http import MediaIoBaseUpload
+        import io as _io
+
+        folder = resolve_path(
+            f"{DRIVE_ROOT_PATH}/SalesBrochure/{dev.id}/Evidence")
+        drive = get_drive()
+        media = MediaIoBaseUpload(
+            _io.BytesIO(data), mimetype="application/octet-stream", resumable=False)
+        f = drive.files().create(
+            body={"name": name, "parents": [folder]},
+            media_body=media,
+            fields="id,name,webViewLink", supportsAllDrives=True,
+        ).execute()
+        return f
+    except Exception as e:  # noqa: BLE001
+        log.warning("could not store the evidence file: %s", e)
+        return None
 
 
 @app.get("/api/brochure", include_in_schema=False)

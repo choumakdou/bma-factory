@@ -189,9 +189,74 @@
               <span class="verdict verdict-{{ item.verdict }}">{{ item.verdict_label }}</span>
             </div>
             <p class="muted small">{{ item.compares }}</p>
-            <form method="post" action="/brochure/{{ dev.id }}/round/{{ round.number }}">
+
+            <details class="how-to">
+              <summary class="muted small">Where to look, and what to record</summary>
+              <ol class="muted small how-to-list">
+                {% for step in item.how_to_check %}<li>{{ step }}</li>{% endfor %}
+              </ol>
+              <p>
+                <a class="dl-link" href="{{ item.source }}" target="_blank" rel="noopener">
+                  {{ item.source_label }} →
+                </a>
+              </p>
+            </details>
+
+            <form method="post" action="/brochure/{{ dev.id }}/round/{{ round.number }}"
+                  enctype="multipart/form-data">
               <input type="hidden" name="action" value="item">
               <input type="hidden" name="item_id" value="{{ item.id }}">
+
+              <div class="evidence-block">
+                <div class="evidence-label">
+                  <b>Evidence</b>
+                  <span class="muted small">
+                    what the source shows today{% if item.evidence_count %}
+                    — {{ item.evidence_count }} recorded{% endif %}
+                  </span>
+                </div>
+                <table class="content-table evidence-table">
+                  <thead>
+                    <tr>
+                      <th>{{ item.evidence_label }}</th>
+                      <th>Title / what it is</th>
+                      <th>Date</th>
+                      <th>Proof</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for e in item.evidence %}
+                    <tr>
+                      <td><input name="ev_ref" value="{{ e.ref }}"
+                                 placeholder="{{ item.evidence_label }}"></td>
+                      <td><input name="ev_title" value="{{ e.title }}"
+                                 placeholder="and its title"></td>
+                      <td><input type="date" name="ev_date" value="{{ e.date }}"></td>
+                      <td class="small">
+                        {% if e.file_id %}
+                          <a href="https://drive.google.com/file/d/{{ e.file_id }}/view"
+                             target="_blank" rel="noopener">{{ e.file_name or 'screenshot' }}</a>
+                        {% else %}
+                          <span class="muted">—</span>
+                        {% endif %}
+                        <input type="file" name="ev_file" accept="image/*,application/pdf"
+                               class="ev-file">
+                      </td>
+                    </tr>
+                    {% endfor %}
+                    {% for _ in range(3) %}
+                    <tr class="ev-new">
+                      <td><input name="ev_ref" placeholder="{{ item.evidence_label }}"></td>
+                      <td><input name="ev_title" placeholder="and its title"></td>
+                      <td><input type="date" name="ev_date"></td>
+                      <td><input type="file" name="ev_file" accept="image/*,application/pdf"
+                                 class="ev-file"></td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+
               <table class="content-table stage0-table">
                 <tbody>
                   <tr>
@@ -201,26 +266,20 @@
                     <td class="muted small">
                       The date on the plan, photograph or sheet inside the
                       brochure you have.
-                    </td>
-                  </tr>
-                  <tr>
-                    <td><b>The version at the source</b></td>
-                    <td><input type="date" name="source_version"
-                               value="{{ item.source_version }}" class="date-input"></td>
-                    <td class="muted small">
-                      What the source shows today.
+                      {% if item.latest_date %}
                       <div style="margin-top:.3rem">
-                        <a class="dl-link" href="{{ item.source }}" target="_blank" rel="noopener">
-                          {{ item.source_label }} →
-                        </a>
+                        Latest at the source:
+                        <b>{{ item.latest_date }}</b>
+                        {% if item.latest_ref %} ({{ item.latest_ref }}){% endif %}
                       </div>
+                      {% endif %}
                     </td>
                   </tr>
                   <tr>
                     <td><b>Note</b></td>
                     <td colspan="2">
                       <input type="text" name="note" value="{{ item.note }}"
-                             placeholder="Plan reference, sheet number, what you saw">
+                             placeholder="anything else you saw">
                     </td>
                   </tr>
                 </tbody>

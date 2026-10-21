@@ -127,6 +127,51 @@ def days_between(a: date, b: date) -> int:
 # ---------------------------------------------------------------------------
 
 @dataclass
+class Evidence:
+    """One piece of evidence that the source has not moved on — or has.
+
+    An item is not checked by typing a date in. It is checked by
+    recording *what was found*, so the record can be audited later:
+
+      OZP            the sheet number and the date it was gazetted
+      Location Plan  the plan sheet number and the plan's date
+      Aerial Photo   the flight and the date it was flown
+
+    A development often sits on more than one OZP sheet, so there is
+    more than one piece of evidence per item, and the **latest** of
+    them is what the brochure has to reflect.
+    """
+    ref: str = ""              # "S/HSK/4"  ·  "TG-NW-A"  ·  "Flight 2025-06-09"
+    title: str = ""            # "Hung Shui Kiu and Ha Tsuen"
+    date: str = ""             # the version date, ISO
+    kind: str = ""             # "ozp-sheet" | "plan-sheet" | "flight"
+    #: The screenshot that proves it, in Drive.
+    file_id: str = ""
+    file_name: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ref": self.ref, "title": self.title, "date": self.date,
+            "kind": self.kind, "file_id": self.file_id, "file_name": self.file_name,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "Evidence":
+        return cls(
+            ref=str(d.get("ref") or ""),
+            title=str(d.get("title") or ""),
+            date=str(d.get("date") or ""),
+            kind=str(d.get("kind") or ""),
+            file_id=str(d.get("file_id") or ""),
+            file_name=str(d.get("file_name") or ""),
+        )
+
+    @property
+    def when(self) -> Optional[date]:
+        return parse_date(self.date)
+
+
+@dataclass
 class Item:
     """One thing to check inside a stage."""
     id: str
@@ -137,6 +182,13 @@ class Item:
     source_label: str = ""
     #: What the check actually compares.
     compares: str = ""
+    #: Where the evidence comes from, and what to record. This is the
+    #: know-how, and it belongs in the app rather than in someone's
+    #: head.
+    how_to_check: list[str] = field(default_factory=list)
+    #: What kind of reference the evidence carries.
+    evidence_kind: str = ""
+    evidence_label: str = "Reference"
     #: True when the app can read the source itself.
     auto: bool = False
 
@@ -150,6 +202,15 @@ CHECK_ITEMS: list[Item] = [
         source_label="HK Map Service — Map Searching",
         compares="the plan reference and date the brochure carries, against the "
                  "current plan at the Map Service",
+        evidence_kind="plan-sheet",
+        evidence_label="Plan sheet no.",
+        how_to_check=[
+            "Search the site in the Map Service.",
+            "In the result list, use the **By Date** dropdown. The top "
+            "entry is the current plan.",
+            "Record the **Sheet No. / Title** and its **Date**.",
+            "A site can have more than one plan sheet — record each one.",
+        ],
     ),
     Item(
         id="aerial_photo",
@@ -158,14 +219,34 @@ CHECK_ITEMS: list[Item] = [
         source_label="HK Map Service — Map Searching",
         compares="the capture date the brochure carries, against the current "
                  "aerial photograph at the Map Service",
+        evidence_kind="flight",
+        evidence_label="Flight",
+        how_to_check=[
+            "Open the map at the site.",
+            "Click the **flight line** — the straight line across the "
+            "photograph.",
+            "The pop-up gives the **Flight Date** and the flying height.",
+            "One flight covers the site, so one date is enough.",
+        ],
     ),
     Item(
         id="ozp",
         name="OZP",
         source="https://www.ozp.tpb.gov.hk/",
         source_label="TPB — Outlying Zoning Plan",
-        compares="the OZP sheet number and revision date the brochure carries, "
+        compares="the OZP sheet number and gazettal date the brochure carries, "
                  "against the current sheet at TPB",
+        evidence_kind="ozp-sheet",
+        evidence_label="Sheet no.",
+        how_to_check=[
+            "Open the sheet in the OZP viewer.",
+            "The sheet's own page says **“Gazetted under Section 9(1)(a) "
+            "on DD/MM/YYYY”** — that gazettal date is the version date.",
+            "**Check every sheet that covers the site.** A development often "
+            "sits on more than one — the Tong Yan San Tsuen / Ping Shan / "
+            "Hung Shui Kiu area sits on three.",
+            "The brochure has to reflect the **latest** of them.",
+        ],
     ),
 ]
 
@@ -284,13 +365,30 @@ class Round:
     # --- Stage 1, computed -----------------------------------------
 
     def item_state(self, item: Item) -> dict[str, Any]:
-        """The state of one item, with the verdict worked out."""
+        """The state of one item, with the verdict worked out.
+
+        The verdict compares the **latest** piece of evidence with what
+        the brochure carries. A development on three OZP sheets is only
+        up to date if the brochure reflects the most recently gazetted
+        of the three — so the latest wins, not the first one typed in.
+        """
         raw = self.items.get(item.id) or {}
         brochure = parse_date(raw.get("brochure_version"))
-        source = parse_date(raw.get("source_version"))
-        if source and brochure:
-            verdict = "update" if source > brochure else "ok"
-        elif source:
+        evidence = [Evidence.from_dict(e) for e in (raw.get("evidence") or [])]
+
+        # A record made before the evidence list existed keeps its
+        # single date, as one piece of evidence with no reference.
+        if not evidence and raw.get("source_version"):
+            evidence = [Evidence(date=str(raw.get("source_version")),
+                                 kind=item.evidence_kind)]
+
+        dated = [e for e in evidence if e.when]
+        latest = max((e.when for e in dated), default=None)
+        latest_ev = next((e for e in dated if e.when == latest), None)
+
+        if latest and brochure:
+            verdict = "update" if latest > brochure else "ok"
+        elif latest:
             verdict = "unknown"
         else:
             verdict = "unchecked"
@@ -301,9 +399,17 @@ class Round:
             "source": item.source,
             "source_label": item.source_label,
             "compares": item.compares,
+            "how_to_check": item.how_to_check,
+            "evidence_kind": item.evidence_kind,
+            "evidence_label": item.evidence_label,
             "auto": item.auto,
             "brochure_version": raw.get("brochure_version", ""),
+            "evidence": [e.to_dict() for e in evidence],
+            "evidence_count": len(evidence),
             "source_version": raw.get("source_version", ""),
+            "latest_date": latest.isoformat() if latest else "",
+            "latest_ref": latest_ev.ref if latest_ev else "",
+            "latest_title": latest_ev.title if latest_ev else "",
             "checked_at": raw.get("checked_at", ""),
             "checked_by": raw.get("checked_by", ""),
             "note": raw.get("note", ""),
@@ -404,6 +510,11 @@ class Development:
                     rnd.items[item.id] = {
                         "brochure_version": state.get("brochure_version", ""),
                         "source_version": "",
+                        # The evidence itself carries forward — it is a
+                        # record of what was found, and it stays
+                        # auditable. What does not carry forward is the
+                        # *verdict*: the new round has to look again.
+                        "evidence": state.get("evidence", []),
                         "note": state.get("note", ""),
                         "checked_at": "",
                     }

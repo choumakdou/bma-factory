@@ -304,3 +304,96 @@ class TestSources(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestEvidence(unittest.TestCase):
+    """The evidence is what was found, not just a date typed in."""
+
+    def _round(self):
+        return Round(number=1)
+
+    def test_the_latest_of_several_sheets_governs(self):
+        """A development on three OZP sheets is only up to date if the
+        brochure reflects the most recently gazetted of the three."""
+        r = self._round()
+        r.items["ozp"] = {"brochure_version": "2021-08-20", "evidence": [
+            {"ref": "S/YL-TYST/14", "date": "2021-08-20"},
+            {"ref": "S/HSK/4", "date": "2026-10-09"},
+            {"ref": "S/YL-PS/22", "date": "2026-05-22"},
+        ]}
+        st = r.item_state(CHECK_ITEMS[2])
+        self.assertEqual(st["evidence_count"], 3)
+        self.assertEqual(st["latest_date"], "2026-10-09")
+        self.assertEqual(st["latest_ref"], "S/HSK/4")
+        self.assertEqual(st["verdict"], "update")
+
+    def test_a_brochure_ahead_of_the_source_needs_no_update(self):
+        r = self._round()
+        r.items["ozp"] = {"brochure_version": "2026-11-01", "evidence": [
+            {"ref": "S/HSK/4", "date": "2026-10-09"},
+        ]}
+        self.assertEqual(r.item_state(CHECK_ITEMS[2])["verdict"], "ok")
+
+    def test_an_older_record_still_reads(self):
+        """A check made before the evidence list existed keeps its date."""
+        r = self._round()
+        r.items["ozp"] = {"brochure_version": "2025-01-01", "source_version": "2026-02-01"}
+        st = r.item_state(CHECK_ITEMS[2])
+        self.assertEqual(st["evidence_count"], 1)
+        self.assertEqual(st["latest_date"], "2026-02-01")
+        self.assertEqual(st["verdict"], "update")
+
+    def test_evidence_with_no_date_is_still_evidence(self):
+        r = self._round()
+        r.items["ozp"] = {"brochure_version": "2025-01-01", "evidence": [
+            {"ref": "S/HSK/4", "title": "Hung Shui Kiu and Ha Tsuen"},
+        ]}
+        st = r.item_state(CHECK_ITEMS[2])
+        self.assertEqual(st["evidence_count"], 1)
+        self.assertEqual(st["verdict"], "unchecked")
+
+    def test_the_screenshot_travels_with_the_evidence(self):
+        r = self._round()
+        r.items["ozp"] = {"evidence": [
+            {"ref": "S/HSK/4", "date": "2026-10-09",
+             "file_id": "FILE123", "file_name": "ozp.png"},
+        ]}
+        st = r.item_state(CHECK_ITEMS[2])
+        self.assertEqual(st["evidence"][0]["file_id"], "FILE123")
+        self.assertEqual(st["evidence"][0]["file_name"], "ozp.png")
+
+    def test_the_evidence_carries_forward_but_the_verdict_does_not(self):
+        d = Development(id="x", name="X")
+        first = d.open_round(date(2026, 8, 1))
+        first.items["ozp"] = {
+            "brochure_version": "2021-08-20",
+            "source_version": "2026-10-09",
+            "evidence": [{"ref": "S/HSK/4", "date": "2026-10-09"}],
+        }
+        second = d.open_round(date(2026, 11, 1))
+        st = second.item_state(CHECK_ITEMS[2])
+        # the evidence is a record of what was found, and stays
+        self.assertEqual(st["evidence_count"], 1)
+        # but the new round has to look again
+        self.assertEqual(st["checked_at"], "")
+        self.assertEqual(st["source_version"], "")
+
+    def test_every_item_says_where_to_look(self):
+        for item in CHECK_ITEMS:
+            self.assertTrue(item.how_to_check, item.id)
+            self.assertTrue(item.evidence_label, item.id)
+            self.assertTrue(item.evidence_kind, item.id)
+
+    def test_the_ozp_instruction_mentions_the_gazettal_date(self):
+        ozp = next(i for i in CHECK_ITEMS if i.id == "ozp")
+        text = " ".join(ozp.how_to_check)
+        self.assertIn("Gazetted", text)
+        self.assertIn("every sheet", text.lower())
+
+    def test_the_aerial_photo_instruction_mentions_the_flight_date(self):
+        ap = next(i for i in CHECK_ITEMS if i.id == "aerial_photo")
+        self.assertIn("Flight Date", " ".join(ap.how_to_check))
+
+    def test_the_location_plan_instruction_mentions_sorting_by_date(self):
+        lp = next(i for i in CHECK_ITEMS if i.id == "location_plan")
+        self.assertIn("By Date", " ".join(lp.how_to_check))
