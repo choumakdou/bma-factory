@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 from typing import Any, Optional
@@ -150,6 +151,53 @@ def _in_hk(lat: float, lon: float) -> bool:
             and _HK_LON[0] <= lon <= _HK_LON[1])
 
 
+#: Words that carry no identifying weight when checking whether a
+#: geocoder result is actually the thing we asked for.
+_NOISE = {
+    "hong", "kong", "china", "district", "territories", "new",
+    "the", "and", "for", "road", "street", "lane", "avenue",
+    "building", "estate", "tower", "house", "court", "block",
+    "phase", "site", "area", "northern", "kowloon", "island",
+}
+
+
+def _norm(s: str) -> str:
+    """Lowercase, unaccented, letters and digits only."""
+    import unicodedata
+    s = unicodedata.normalize("NFKD", str(s or ""))
+    return "".join(c for c in s.lower() if c.isalnum())
+
+
+def _name_tokens(name: str) -> list[str]:
+    """The identifying words in an estate name."""
+    return [t for t in re.findall(r"[A-Za-z][A-Za-z0-9']{3,}", str(name or ""))
+            if t.lower() not in _NOISE]
+
+
+def _result_is_the_right_place(display_name: str, name: str) -> bool:
+    """Does the result actually look like the estate we asked for?
+
+    This gate exists because the public geocoder will happily invent
+    an answer. Asking for ``La Aldea, Ping Shan, Hong Kong`` returns
+    ``House 2, Ping Kwai Road, Hung Uk Tsuen`` — a different house on a
+    different road, and a *different* one for every spelling of the
+    query. It is inside Hong Kong, so the bounding box does not catch
+    it, and it is type ``house``, so it looks like a plausible result.
+
+    The one reliable signal is that a correct answer names the place we
+    asked about. If OSM knows the estate, its name is in the display
+    name. If it does not, we get a street address that has nothing to
+    do with it — and no pin.
+    """
+    if not name:
+        return True
+    tokens = _name_tokens(name)
+    if not tokens:
+        return True
+    dn = _norm(display_name)
+    return any(_norm(t) in dn for t in tokens)
+
+
 def geocode(address: str, district: str = "", name: str = "") -> Optional[tuple[float, float, str]]:
     """Look a place up. ``(lat, lon, label)`` or None.
 
@@ -159,15 +207,20 @@ def geocode(address: str, district: str = "", name: str = "") -> Optional[tuple[
     * ``countrycodes=hk`` returns **nothing** for Hong Kong. It is
       accepted by the API and quietly filters every HK result away.
       The bounding-box check below is what actually keeps us in HK.
-    * Coverage of individual buildings is patchy. A residential
-      estate is usually in OSM under its *name*; the street address
-      alone often finds nothing.
+    * Coverage of individual buildings is patchy, and where a name is
+      unknown the geocoder still returns *something* — a house on a
+      nearby road. So every result is checked against the name we
+      asked for, and a result that does not mention it is discarded.
 
-    So the queries are tried in descending confidence: the estate name
-    first, then the address with its district, then the address alone.
+    Queries are tried in descending confidence: the estate name first,
+    then the address with its district, then the address alone.
     """
-    for query in _queries(address, district, name):
-        hit = _geocode_one(query)
+    queries = _queries(address, district, name)
+    # Only the name-led queries are held to the name check. An
+    # address-only query has nothing distinctive to check against.
+    for i, query in enumerate(queries):
+        must_contain = name if (i == 0 and name) else ""
+        hit = _geocode_one(query, must_contain=must_contain)
         if hit:
             return hit
     return None
@@ -196,7 +249,7 @@ def _queries(address: str, district: str, name: str) -> list[str]:
     return [q for q in out if not (q.lower() in seen or seen.add(q.lower()))]
 
 
-def _geocode_one(query: str) -> Optional[tuple[float, float, str]]:
+def _geocode_one(query: str, must_contain: str = "") -> Optional[tuple[float, float, str]]:
     query = str(query or "").strip()
     if not query:
         return None
@@ -256,6 +309,13 @@ def _geocode_one(query: str) -> Optional[tuple[float, float, str]]:
         return None
 
     label = str(hit.get("display_name") or query)
+    if not _result_is_the_right_place(label, must_contain):
+        # Right city, wrong building. Discarded rather than shown: a
+        # pin on the wrong side of Yuen Long is worse than no pin.
+        log.info("discarded geocode for %r — result does not name it: %s",
+                 must_contain or query, label[:80])
+        return None
+
     with _lock:
         _cache[_clean(query)] = {
             "lat": round(lat, 6), "lon": round(lon, 6),
@@ -266,6 +326,31 @@ def _geocode_one(query: str) -> Optional[tuple[float, float, str]]:
         }
     _save()
     return round(lat, 6), round(lon, 6), label
+
+
+def suggest(key: str, address: str = "", district: str = "", name: str = "") -> Optional[tuple[float, float, str]]:
+    """Geocode for a project and file the answer under the PROJECT's key.
+
+    The geocoder caches under the query it ran ("La Aldea, Ping Shan,
+    Hong Kong") while the map looks the project up by its address
+    ("8 Ping Pak Lane, Ping Shan, Yuen Long"). Storing only under the
+    query meant a successful lookup was never found again — the pin
+    silently refused to appear. This writes both keys.
+
+    Returns the location, or None when the geocoder has nothing usable.
+    """
+    got = geocode(address, district, name)
+    if not got:
+        return None
+    lat, lon, label = got
+    if key and _clean(key) not in _queries(address, district, name) + [key]:
+        # only write the project key when the project actually has one
+        remember(key, {
+            "lat": lat, "lon": lon, "how": "geocoded",
+            "label": label, "source": "openstreetmap/nominatim",
+            "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        })
+    return got
 
 
 def resolve(

@@ -300,14 +300,96 @@ class TestLocateIsDeliberate(unittest.TestCase):
         from unittest import mock
         from demo.app import app
         import demo.geo as geo
-        with mock.patch.object(geo, "geocode", return_value=None):
+        with mock.patch.object(geo, "suggest", return_value=None):
             r = TestClient(app).post(
                 "/map/locate",
                 data={"key": "k", "address": "nowhere at all",
                       "district": "", "name": ""},
                 follow_redirects=False)
         self.assertEqual(r.status_code, 303)
-        self.assertIn("No+match", r.headers["location"])
+        self.assertIn("No+reliable+match", r.headers["location"])
+
+
+class TestARelevanceGate(unittest.TestCase):
+    """The geocoder invents answers, and they are inside Hong Kong.
+
+    Asking for ``La Aldea, Ping Shan, Hong Kong`` returns ``House 2,
+    Ping Kwai Road, Hung Uk Tsuen`` — and a *different* house for every
+    spelling of the query. The bounding box does not catch it, because
+    Hung Uk Tsuen is in Hong Kong. These tests pin that shut.
+    """
+
+    # The actual response the public geocoder gave for La Aldea.
+    WRONG = ("House 2, Ping Kwai Road, Hung Uk Tsuen, Yuen Long District, "
+             "New Territories, Hong Kong, China")
+
+    def test_the_wrong_match_for_la_aldea_is_rejected(self):
+        from demo.geo import _result_is_the_right_place
+        self.assertFalse(_result_is_the_right_place(self.WRONG, "La Aldea"))
+
+    def test_a_genuine_match_is_accepted(self):
+        from demo.geo import _result_is_the_right_place
+        self.assertTrue(_result_is_the_right_place(
+            "La Aldea, 8 Ping Pak Lane, Ping Shan, Yuen Long, Hong Kong",
+            "La Aldea"))
+
+    def test_a_query_with_no_name_is_not_name_checked(self):
+        """An address-only query has nothing distinctive to check."""
+        from demo.geo import _result_is_the_right_place
+        self.assertTrue(_result_is_the_right_place("anything at all", ""))
+
+    def test_a_name_that_is_all_noise_is_not_checked(self):
+        """'The Estate' tells us nothing, so it must not reject
+        everything — that would make every development unlocatable."""
+        from demo.geo import _result_is_the_right_place
+        for noise in ("The Estate", "Tower", "Phase 1", ""):
+            self.assertTrue(
+                _result_is_the_right_place(self.WRONG, noise), noise)
+
+    def test_matching_ignores_case_and_accents(self):
+        from demo.geo import _result_is_the_right_place
+        self.assertTrue(_result_is_the_right_place(
+            "la aldea, ping shan, hong kong", "La Aldea"))
+        self.assertTrue(_result_is_the_right_place(
+            "La Aldea 南屏匯, Ping Shan", "La Aldea"))
+
+    def test_only_the_name_query_is_held_to_the_gate(self):
+        """Address queries legitimately return street addresses."""
+        src = (Path(__file__).resolve().parents[1] / "demo" / "geo.py").read_text()
+        self.assertIn("must_contain = name if (i == 0 and name) else \"\"",
+                      src)
+
+
+class TestASuggestionIsFoundAgain(unittest.TestCase):
+    """A successful lookup must be visible to the map.
+
+    The geocoder caches under the query it ran; the map looks the
+    project up by its address. Storing only under the query meant the
+    pin never appeared — the lookup succeeded and the suggestion was
+    invisible.
+    """
+
+    def test_suggest_files_under_the_projects_own_key(self):
+        import demo.geo as geo
+        from unittest import mock
+        project_key = "8 Ping Pak Lane, Ping Shan, Yuen Long"
+        with mock.patch.object(geo, "geocode",
+                               return_value=(22.44, 114.01, "La Aldea")):
+            got = geo.suggest(project_key,
+                              "8 Ping Pak Lane, Ping Shan, Yuen Long",
+                              "Ping Shan", "La Aldea")
+        self.assertIsNotNone(got)
+        lat, lon, how = geo.coords(project_key)
+        self.assertEqual((lat, lon), (22.44, 114.01))
+        self.assertEqual(how, "geocoded")
+        geo.forget(project_key)
+
+    def test_suggest_returns_nothing_when_the_geocoder_has_nothing(self):
+        import demo.geo as geo
+        from unittest import mock
+        with mock.patch.object(geo, "geocode", return_value=None):
+            self.assertIsNone(geo.suggest("k", "nowhere", "", "Nothing"))
+        self.assertEqual(geo.coords("k")[0], None)
 
 
 class TestPageShape(_NoNetwork):

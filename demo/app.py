@@ -385,14 +385,15 @@ async def map_locate(request: Request):
         return RedirectResponse("/map?error=Nothing+to+look+up", status_code=303)
 
     from demo import geo
-    got = geo.geocode(address, district, name)
+    got = geo.suggest(key, address, district, name)
     if got:
         return RedirectResponse(
             f"/map?found={quote_plus(got[2][:120])}", status_code=303)
     return RedirectResponse(
         "/map?error="
-        + quote_plus("No match for that address — the public map does not "
-                     "have this building. Confirm it by hand instead."),
+        + quote_plus("No reliable match for that address. The public map "
+                     "does not name this building, so no pin was placed — "
+                     "confirm it by hand instead."),
         status_code=303)
 
 
