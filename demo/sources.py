@@ -31,8 +31,11 @@ from typing import Any, Optional
 log = logging.getLogger("bma-factory.sources")
 
 #: How long a source read may take. Long enough for a government
-#: website, short enough not to hold a page.
-TIMEOUT = 12
+#: website, short enough not to hold a page. The probe runs on the
+#: page, so it is bounded hard: three candidates at six seconds each,
+#: and the three sources are read at the same time rather than in
+#: series.
+TIMEOUT = 6
 
 #: A context that will not refuse a government site's certificate
 #: chain in a sandbox that intercepts TLS.
@@ -103,10 +106,8 @@ def srpe_newly_uploaded_link() -> str:
 #: its published bundle.
 _SRPE_METHOD_CANDIDATES = [
     "/Common/getSelectedDev",
-    "/Common/getSelectedDevelopment",
     "/Common/getDevUploadDate",
     "/SelectedDev/getSelectedDev",
-    "/Dev/getSelectedDev",
 ]
 
 #: The result of the last probe, so a page view does not re-probe.
@@ -236,11 +237,23 @@ def hkms_probe() -> tuple[bool, str]:
 # ---------------------------------------------------------------------------
 
 def check_all(dev: Any) -> dict[str, Any]:
-    """What each source can and cannot do right now."""
+    """What each source can and cannot do right now.
+
+    The three probes are independent, so they are read at the same
+    time — in series they would hold the page for the sum of their
+    timeouts.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
     dev_id = getattr(dev, "dev_id", "") or ""
     address = getattr(dev, "address", "") or ""
-    ozp_ok, ozp_detail = ozp_probe()
-    hkms_ok, hkms_detail = hkms_probe()
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        f_ozp = pool.submit(ozp_probe)
+        f_hkms = pool.submit(hkms_probe)
+        f_srpe = pool.submit(srpe_probe)
+        ozp_ok, ozp_detail = f_ozp.result()
+        hkms_ok, hkms_detail = f_hkms.result()
+        f_srpe.result()
     return {
         "srpe": {
             "ok": False,
