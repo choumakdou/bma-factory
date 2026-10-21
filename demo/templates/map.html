@@ -35,6 +35,12 @@
   <div class="console-banner console-banner-ok">
     <span>✓ {{ request.query_params.get('saved') }}</span>
   </div>
+  {% elif request.query_params.get('warmed') %}
+  <div class="console-banner console-banner-info">
+    <span>📍 Looking up {{ request.query_params.get('warmed') }} missing
+      location{{ '' if request.query_params.get('warmed') == '1' else 's' }}
+      in the background, one a second. Reload in a minute.</span>
+  </div>
   {% elif request.query_params.get('found') %}
   <div class="console-banner console-banner-ok">
     <span>✓ Matched “{{ request.query_params.get('found') }}”. Check the
@@ -60,18 +66,27 @@
         </div>
 
         <div class="map-canvas-wrap">
+          <div class="map-viewbar">
+            <button type="button" class="map-viewbtn" data-view="fit">
+              Fit to projects</button>
+            <button type="button" class="map-viewbtn is-active" data-view="hk">
+              Whole of Hong Kong</button>
+            <form method="post" action="/map/warm" style="display:inline">
+              <button class="map-viewbtn map-viewbtn-warm" type="submit">
+                Look up missing locations</button>
+            </form>
+          </div>
           <div id="map" class="map-canvas" aria-label="Map of projects"></div>
           <div id="map-nodata" class="map-nodata" hidden>
-            <p><b>Nothing placed on the map yet.</b></p>
-            <p class="muted small">Use “Find on map” on a project in the
-              list. Each pin is a suggestion until you confirm it.</p>
+            <p><b>No pins placed yet.</b></p>
+            <p class="muted small" id="map-nodata-msg">Looking them up now.</p>
           </div>
         </div>
 
         <div class="map-legend">
           <span class="lg"><i class="lg-pin lg-confirmed"></i> confirmed by you</span>
           <span class="lg"><i class="lg-pin lg-geocoded"></i> suggested — check before you rely on it</span>
-          <span class="lg muted small">Tiles © OpenStreetMap contributors</span>
+          <span class="lg muted small">Numbers match the list. Tiles © OpenStreetMap contributors</span>
         </div>
       </section>
 
@@ -82,11 +97,13 @@
         </div>
 
         <p class="map-hint muted small">
-          A project is placed when we have its coordinates. “Find on map”
-          asks the public geocoder for that one address — one at a time,
-          because it allows one request a second. Nothing is placed until
-          a location is confirmed or a suggestion is shown as a dashed pin.
+          The map opens showing every project in the list — the numbers on
+          the pins are the numbers in the list below. Locations are looked
+          up on their own, one a second in the background, so a project you
+          have never opened can still get a pin.
         </p>
+
+        <p id="map-pending" class="map-pending muted small" hidden></p>
 
         <div id="map-list" class="map-list"></div>
 

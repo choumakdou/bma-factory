@@ -374,6 +374,39 @@ def resolve(
     return None, None, "", ""
 
 
+def warm(keys: list[tuple[str, str, str, str]], budget: int = 60) -> dict[str, Any]:
+    """Fill in locations for a batch of projects, rate-limited.
+
+    Called in a background thread so the map page still returns in a
+    second. Nominatim allows one request a second, so this takes about
+    as many seconds as there are projects — which is exactly why it
+    cannot happen during a page render.
+
+    ``keys`` is ``[(project_key, address, district, name)]``. Anything
+    already on file is skipped, and anything already *confirmed* is
+    never touched.
+    """
+    done, skipped, failed = 0, 0, 0
+    for n, (key, address, district, name) in enumerate(keys):
+        if n >= budget:
+            break
+        if coords(key)[0] is not None:
+            skipped += 1
+            continue
+        try:
+            got = suggest(key, address, district, name)
+        except Exception as e:  # noqa: BLE001
+            log.info("warm: %r failed: %s", key, e)
+            got = None
+        if got:
+            done += 1
+        else:
+            failed += 1
+    out = {"placed": done, "already_had_one": skipped, "no_match": failed}
+    log.info("warm finished: %s", out)
+    return out
+
+
 def status() -> dict[str, Any]:
     """Counts for the diagnostics page."""
     _load()

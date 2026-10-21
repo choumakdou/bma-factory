@@ -15,6 +15,7 @@ before it finishes.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from demo import geo
@@ -58,11 +59,62 @@ def _pin(
 
 
 def _address_key(address: str, district: str, name: str) -> str:
+    """A stable key for a place, so the same building is one pin.
+
+    Bel-Air M2 is stored as ``510 King's Road, Hong Kong`` in the case
+    list and ``510 KING'S RD, Hong Kong`` in the workbook extract. Those
+    are one building, and before this they drew two pins two metres
+    apart and kept two coordinate entries that could drift apart.
+
+    The key is the address normalised: street suffixes spelled out,
+    case and punctuation dropped, and the boilerplate tail removed.
+    The *display* address keeps whatever the source wrote, because
+    that is what the valuer recognises.
+    """
     if address:
-        return address
+        return _norm_place(address)
     if name and district:
-        return f"{name}, {district}"
-    return name or ""
+        return _norm_place(f"{name}, {district}")
+    return _norm_place(name) if name else ""
+
+
+#: The tail of every HK address, and other wording that says nothing
+#: about which building this is.
+_PLACE_NOISE = {
+    "hong kong", "hongkong", "hk", "china", "new territories",
+    "the hong kong special administrative region",
+}
+
+
+def _norm_place(addr: str) -> str:
+    """Normalise an address for use as a lookup key."""
+    from demo.intake import STREET_SUFFIX
+
+    text = str(addr or "").strip()
+    if not text:
+        return ""
+    # Strip the shared tail FIRST, while the commas are still there.
+    # Every HK address ends in the same three words, and after
+    # punctuation is dropped there is no way left to tell a tail from
+    # a street actually called "Hong Kong Road".
+    for noise in sorted(_PLACE_NOISE, key=len, reverse=True):
+        text = re.sub(rf"(?:,|^)\s*{re.escape(noise)}\s*,?\s*$", "",
+                      text, flags=re.I).strip().rstrip(",").strip()
+    # Spell out the abbreviations the extracts use, using the same
+    # table the house-style formatter does.
+    words = []
+    for chunk in text.split(","):
+        for w in chunk.split():
+            bare = w.strip(".,")
+            key = bare.upper()
+            if key in STREET_SUFFIX and len(bare) > 1:
+                words.append(STREET_SUFFIX[key])
+            else:
+                words.append(bare)
+    out = " ".join(w for w in words if w)
+    out = re.sub(r"[^\w\s]", " ", out.lower())
+    out = re.sub(r"\s+", " ", out).strip()
+    return out
 
 
 def collect() -> dict[str, list[dict[str, Any]]]:

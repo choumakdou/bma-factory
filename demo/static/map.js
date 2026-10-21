@@ -51,21 +51,26 @@
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
-  function iconFor(pin) {
-    var cls = 'map-pin ' +
+  function iconFor(pin, n) {
+    // A numbered tag, not a dot. The number matches the position of
+    // the project in the side list, so "12" on the map is the twelfth
+    // thing in the panel and the two can be read against each other.
+    var cls = 'map-tag ' +
       (pin.how === 'confirmed' ? 'is-confirmed' : 'is-geocoded') +
       (pin.tab === 'sbr' ? ' is-sbr' : '');
     return L.divIcon({
       className: 'map-marker',
-      html: '<div class="' + cls + '"></div>',
-      iconSize: [16, 16],
-      iconAnchor: [8, 8],
-      popupAnchor: [0, -10]
+      html: '<div class="' + cls + '" title="' + esc(pin.name) + '">' +
+            esc(String(n)) + '</div>',
+      iconSize: [24, 24],
+      iconAnchor: [12, 12],
+      popupAnchor: [0, -14]
     });
   }
 
   function popupHtml(pin) {
-    var h = '<b>' + esc(pin.name) + '</b>';
+    var h = '<span class="map-popup-no">' + esc(pin._n || '') + '</span>' +
+            '<b>' + esc(pin.name) + '</b>';
     if (pin.address || pin.district) {
       h += '<div class="map-popup-meta">' +
            esc([pin.address, pin.district].filter(Boolean).join(' · ')) +
@@ -114,16 +119,35 @@
   function buildLayer(tabId) {
     var layer = L.layerGroup();
     var pins = GROUPS[tabId] || [];
-    pins.forEach(function (pin) {
+    pins.forEach(function (pin, i) {
       if (pin.lat == null || pin.lon == null) return;   // never invent
+      // Numbered in LIST order, not in the order they happened to be
+      // located, so the number is stable between visits.
+      pin._n = i + 1;
       var m = L.marker([pin.lat, pin.lon], {
-        icon: iconFor(pin),
-        title: pin.name,
+        icon: iconFor(pin, pin._n),
+        title: pin._n + '. ' + pin.name,
         alt: pin.name
       }).bindPopup(popupHtml(pin));
       m.addTo(layer);
     });
     return layer;
+  }
+
+  // Hong Kong proper. Shown when too few projects are placed for a
+  // fit-to-pins zoom to mean anything.
+  var HK_BOUNDS = L.latLngBounds([22.15, 113.83], [22.60, 114.45]);
+
+  function fitView(mode) {
+    var placed = (GROUPS[activeTab] || []).filter(function (p) {
+      return p.lat != null;
+    });
+    if (mode === 'hk') { map.fitBounds(HK_BOUNDS, { padding: [16, 16] }); return; }
+    if (!placed.length) { map.fitBounds(HK_BOUNDS, { padding: [16, 16] }); return; }
+    var b = L.latLngBounds(placed.map(function (p) { return [p.lat, p.lon]; }));
+    // maxZoom keeps two adjacent buildings from zooming to street level
+    // just because they are 30m apart; the numbers still separate them.
+    map.fitBounds(b, { padding: [48, 48], maxZoom: 17 });
   }
 
   function showTab(tabId) {
@@ -139,21 +163,30 @@
       b.setAttribute('aria-selected', on ? 'true' : 'false');
     });
 
-    var placed = (GROUPS[tabId] || []).filter(function (p) { return p.lat != null; });
-    if (placed.length) {
-      var bounds = L.latLngBounds(placed.map(function (p) { return [p.lat, p.lon]; }));
-      map.fitBounds(bounds, { padding: [40, 40], maxZoom: 16 });
-    } else {
-      map.setView([22.32, 114.17], 11);
-    }
+    var all = GROUPS[tabId] || [];
+    var placed = all.filter(function (p) { return p.lat != null; });
+
+    // Fit to the projects when there are enough of them to fit; show
+    // the whole of Hong Kong when there are few or none, because a map
+    // zoomed to a single pin says nothing about where the work is.
+    var mode = placed.length >= 2 ? 'fit' : 'hk';
+    fitView(mode);
+    setViewButtons(mode);
 
     var nd = document.getElementById('map-nodata');
-    if (nd) nd.hidden = placed.length > 0;
+    if (nd) {
+      nd.hidden = placed.length > 0;
+      var msg = document.getElementById('map-nodata-msg');
+      if (msg && !placed.length) {
+        msg.textContent = all.length
+          ? 'None of these ' + all.length + ' projects has a location yet. ' +
+            'The app is looking them up now — reload in a minute, or drop ' +
+            'the pins yourself below.'
+          : 'Nothing here yet.';
+      }
+    }
 
     var title = document.getElementById('map-side-title');
-    var all = GROUPS[tabId] || [];
-    var conf = all.filter(function (p) { return p.how === 'confirmed'; }).length;
-    var geo = all.filter(function (p) { return p.how === 'geocoded'; }).length;
     if (title) {
       title.textContent = (tabId === 'sbr'
         ? 'Sales Brochure Review' : 'Property Valuation');
@@ -163,8 +196,22 @@
       cnt.textContent = all.length + ' project' + (all.length === 1 ? '' : 's') +
         ' · ' + placed.length + ' placed';
     }
+    var pend = document.getElementById('map-pending');
+    if (pend) {
+      pend.hidden = placed.length >= all.length;
+      if (!pend.hidden) {
+        pend.textContent = placed.length + ' of ' + all.length +
+          ' placed. Locations are being looked up now — reload in a minute ' +
+          'to see the rest.';
+      }
+    }
     renderList(all);
-    void conf; void geo;
+  }
+
+  function setViewButtons(mode) {
+    document.querySelectorAll('[data-view]').forEach(function (b) {
+      b.classList.toggle('is-active', b.getAttribute('data-view') === mode);
+    });
   }
 
   function renderList(pins) {
@@ -175,9 +222,11 @@
       host.innerHTML = '<div class="map-empty">Nothing here yet.</div>';
       return;
     }
-    host.innerHTML = pins.map(function (p) {
+    host.innerHTML = pins.map(function (p, i) {
+      var n = i + 1;
       var state = p.how === 'confirmed' ? 'is-confirmed'
                 : (p.how === 'geocoded' ? 'is-geocoded' : 'is-unlocated');
+      if (p.tab === 'sbr') state += ' is-sbr';
       var badge = p.how === 'confirmed'
         ? '<span class="muted small">confirmed</span>'
         : (p.how === 'geocoded'
@@ -188,25 +237,36 @@
         ? '<div class="map-item-addr">' + esc(p.address) + '</div>'
         : '<div class="map-item-addr muted">No address on file</div>';
       var actions = '<a href="' + esc(p.href) + '">Open →</a>';
-      if (!p.how) {
+      if (p.lat != null) {
+        actions += '<button type="button" class="is-located" data-focus="' +
+          esc(p.key) + '" data-lat="' + esc(p.lat) + '" data-lon="' + esc(p.lon) +
+          '">Show pin</button>';
+      }
+      if (p.how === 'geocoded') {
+        // A suggestion is only useful if it can be accepted from here
+        // as well as from the pin itself.
+        actions += '<form method="post" action="/map/confirm" style="display:inline">' +
+          '<input type="hidden" name="key" value="' + esc(p.key) + '">' +
+          '<input type="hidden" name="lat" value="' + esc(p.lat) + '">' +
+          '<input type="hidden" name="lon" value="' + esc(p.lon) + '">' +
+          '<button type="submit" class="is-located">Confirm</button></form>';
+      }
+      if (p.how !== 'confirmed') {
         actions += '<form method="post" action="/map/locate" style="display:inline">' +
           '<input type="hidden" name="key" value="' + esc(p.key) + '">' +
           '<input type="hidden" name="address" value="' + esc(p.address) + '">' +
           '<input type="hidden" name="district" value="' + esc(p.district) + '">' +
           '<input type="hidden" name="name" value="' + esc(p.name) + '">' +
-          '<button type="submit">Find on map</button></form>';
-      } else if (p.how === 'geocoded') {
-        actions += '<button type="button" class="is-located" data-focus="' +
-          esc(p.key) + '" data-lat="' + esc(p.lat) + '" data-lon="' + esc(p.lon) +
-          '">Show pin</button>';
-        actions += '<form method="post" action="/map/confirm" style="display:inline">' +
-          '<input type="hidden" name="key" value="' + esc(p.key) + '">' +
-          '<input type="hidden" name="lat" value="' + esc(p.lat) + '">' +
-          '<input type="hidden" name="lon" value="' + esc(p.lon) + '">' +
-          '<button type="submit">Confirm</button></form>';
+          '<button type="submit">' +
+          (p.how === 'geocoded' ? 'Look up again' : 'Find on map') +
+          '</button></form>';
       }
-      return '<div class="map-item ' + state + '">' +
-        '<div class="map-item-name">' + esc(p.name) + '</div>' + addr +
+      return '<div class="map-item ' + state + '" id="item-' + n + '">' +
+        '<div class="map-item-head">' +
+          '<span class="map-item-no">' + n + '</span>' +
+          '<div><div class="map-item-name">' + esc(p.name) + '</div>' +
+          addr + '</div>' +
+        '</div>' +
         (sub ? '<div class="map-item-meta">' + sub + '</div>' : '') +
         '<div class="map-item-meta">' + badge + '</div>' +
         '<div class="map-item-actions">' + actions + '</div>' +
@@ -214,8 +274,11 @@
     }).join('');
   }
 
-  // "Confirm this location" inside a popup.
+  // "Confirm this location" inside a popup, and the view buttons.
   document.addEventListener('click', function (ev) {
+    var v = ev.target.closest ? ev.target.closest('[data-view]') : null;
+    if (v && map) { fitView(v.getAttribute('data-view')); return; }
+
     var b = ev.target.closest ? ev.target.closest('[data-confirm]') : null;
     if (b) {
       var f = document.createElement('form');
@@ -232,6 +295,21 @@
     if (g && map) {
       map.setView([Number(g.getAttribute('data-lat')),
                    Number(g.getAttribute('data-lon'))], 17);
+      // highlight the matching row so the number and the list line up
+      var all = GROUPS[activeTab] || [];
+      for (var i = 0; i < all.length; i++) {
+        if (all[i].key === g.getAttribute('data-focus')) {
+          var row = document.getElementById('item-' + (i + 1));
+          if (row) {
+            row.classList.add('is-flash');
+            row.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+            setTimeout(function () {
+              row.classList.remove('is-flash');
+            }, 1600);
+          }
+          break;
+        }
+      }
     }
   });
 

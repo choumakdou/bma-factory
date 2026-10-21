@@ -122,7 +122,7 @@ class TestAPinIsNeverInvented(unittest.TestCase):
         # A development with no address at all is skipped by collect(),
         # but a development WITH a name is keyed and therefore listed.
         key = _address_key("", "Ping Shan", "Some Estate")
-        self.assertEqual(key, "Some Estate, Ping Shan")
+        self.assertEqual(key, "some estate ping shan")
         self.assertIsNone(geo.coords(key)[0])
 
 
@@ -451,6 +451,231 @@ class TestPageShape(_NoNetwork):
                     self.assertIsNone(p.get("lon"), p)
                 else:
                     self.assertIsNotNone(p.get("lon"), p)
+
+
+
+class TestOneBuildingIsOnePin(unittest.TestCase):
+    """Bel-Air M2 is 510 King's Road in the case list and 510 KING'S RD
+    in the workbook. One building, two spellings, two pins two metres
+    apart — and two coordinate entries free to drift apart."""
+
+    def test_the_two_spellings_collapse_to_one_key(self):
+        from demo.mappins import _address_key
+        self.assertEqual(
+            _address_key("510 King's Road, Hong Kong", "HNP", "Bel-Air M2"),
+            _address_key("510 KING'S RD, Hong Kong", "HNP", "Island Place Tower"))
+
+    def test_the_key_is_lowercased_and_unpunctuated(self):
+        from demo.mappins import _address_key
+        self.assertEqual(
+            _address_key("510 King's Road, Hong Kong", "HNP", "x"),
+            "510 king s road")
+
+    def test_the_boilerplate_tail_is_dropped(self):
+        from demo.mappins import _norm_place
+        for tail in (", Hong Kong", ", Hongkong", ", HONG KONG"):
+            self.assertEqual(_norm_place(f"8 Ping Pak Lane{tail}"),
+                             "8 ping pak lane")
+
+    def test_a_longer_boilerplate_tail_is_dropped_too(self):
+        from demo.mappins import _norm_place
+        self.assertEqual(
+            _norm_place("Ping Pak Lane, Yuen Long, New Territories, Hong Kong"),
+            "ping pak lane yuen long new territories")
+
+    def test_a_distinct_building_keeps_a_distinct_key(self):
+        from demo.mappins import _address_key
+        self.assertNotEqual(
+            _address_key("8 Ping Pak Lane, Ping Shan, Yuen Long", "Ping Shan", "La Aldea"),
+            _address_key("9 Ping Pak Lane, Ping Shan, Yuen Long", "Ping Shan", "Other"))
+
+    def test_the_display_address_is_left_as_written(self):
+        """Normalising the key must not rewrite what the valuer reads."""
+        from demo.mappins import _pin
+        import demo.geo as geo
+        pin = _pin("some key", pid="p", name="Bel-Air M2",
+                   address="510 KING'S RD, Hong Kong", district="HNP",
+                   tab="pv", href="/case/x")
+        self.assertEqual(pin["address"], "510 KING'S RD, Hong Kong")
+
+
+class TestNumberedTags(unittest.TestCase):
+    """The number on the pin is the number in the list."""
+
+    def test_the_marker_carries_the_number(self):
+        from pathlib import Path
+        js = (Path(__file__).resolve().parents[1] / "demo" / "static"
+              / "map.js").read_text()
+        self.assertIn("map-tag", js)
+        self.assertIn("iconFor(pin, pin._n)", js)
+
+    def test_numbering_is_by_list_position_not_by_placement_order(self):
+        """The number must be stable between visits, so it is assigned
+        in list order before anything is drawn."""
+        from pathlib import Path
+        js = (Path(__file__).resolve().parents[1] / "demo" / "static"
+              / "map.js").read_text()
+        self.assertIn("pins.forEach(function (pin, i)", js)
+        self.assertIn("pin._n = i + 1", js)
+
+    def test_the_list_is_numbered_the_same_way(self):
+        from pathlib import Path
+        js = (Path(__file__).resolve().parents[1] / "demo" / "static"
+              / "map.js").read_text()
+        self.assertIn("pins.map(function (p, i)", js)
+        self.assertIn("map-item-no", js)
+
+    def test_a_suggestion_still_offers_confirmation_from_the_list(self):
+        """Accepting a pin must not require opening the popup."""
+        from pathlib import Path
+        js = (Path(__file__).resolve().parents[1] / "demo" / "static"
+              / "map.js").read_text()
+        self.assertIn('action="/map/confirm"', js)
+        self.assertIn("if (p.how === 'geocoded')", js)
+
+    def test_clicking_show_pin_moves_the_list_too(self):
+        from pathlib import Path
+        js = (Path(__file__).resolve().parents[1] / "demo" / "static"
+              / "map.js").read_text()
+        self.assertIn("is-flash", js)
+        # the row it highlights is the one carrying the same number
+        self.assertIn("getElementById('item-' + (i + 1))", js)
+
+
+class TestFittingTheView(unittest.TestCase):
+    """All the projects visible without clicking anything."""
+
+    def test_the_view_bar_offers_both_framings(self):
+        from pathlib import Path
+        tpl = (Path(__file__).resolve().parents[1] / "demo" / "templates"
+               / "map.html").read_text()
+        self.assertIn('data-view="fit"', tpl)
+        self.assertIn('data-view="hk"', tpl)
+
+    def test_the_default_is_whole_hong_kong(self):
+        from pathlib import Path
+        tpl = (Path(__file__).resolve().parents[1] / "demo" / "templates"
+               / "map.html").read_text()
+        # with nothing placed, the whole territory is the only honest view
+        self.assertIn('data-view="hk">', tpl)
+        self.assertIn("Whole of Hong Kong", tpl)
+
+    def test_fit_uses_the_hk_bounds_as_a_fallback(self):
+        from pathlib import Path
+        js = (Path(__file__).resolve().parents[1] / "demo" / "static"
+              / "map.js").read_text()
+        self.assertIn("HK_BOUNDS", js)
+        self.assertIn("[22.15, 113.83]", js)
+        self.assertIn("[22.60, 114.45]", js)
+
+    def test_fit_bounds_is_capped_so_two_neighbours_do_not_zoom_in(self):
+        from pathlib import Path
+        js = (Path(__file__).resolve().parents[1] / "demo" / "static"
+              / "map.js").read_text()
+        self.assertIn("maxZoom: 17", js)
+
+    def test_one_or_no_pins_shows_the_territory_not_a_street(self):
+        from pathlib import Path
+        js = (Path(__file__).resolve().parents[1] / "demo" / "static"
+              / "map.js").read_text()
+        self.assertIn("placed.length >= 2 ? 'fit' : 'hk'", js)
+
+    def test_the_map_lib_actually_fits_rather_than_defaulting(self):
+        from pathlib import Path
+        js = (Path(__file__).resolve().parents[1] / "demo" / "static"
+              / "map.js").read_text()
+        self.assertIn("fitBounds", js)
+
+
+class TestTheWarmIsBackground(unittest.TestCase):
+    """Locations appear without Bobby clicking anything — and the page
+    still returns in about a second."""
+
+    def test_opening_the_map_starts_a_background_fill(self):
+        from unittest import mock
+        from fastapi.testclient import TestClient
+        from demo import app as appmod
+        fired = []
+        with mock.patch.object(appmod, "_warm_locations_in_background",
+                               side_effect=lambda g: fired.append(g)):
+            TestClient(appmod.app).get("/map")
+        self.assertTrue(fired, "the map page should kick off a fill")
+
+    def test_a_fill_is_only_started_once_at_a_time(self):
+        from demo import app as appmod
+        appmod._warm_running = False
+        started = []
+        real_thread = appmod.threading.Thread
+
+        class _Fake:
+            def __init__(self, target=None, name=None, daemon=None):
+                started.append(name)
+
+            def start(self):
+                pass
+
+        appmod.threading.Thread = _Fake
+        try:
+            groups = {"pv": [{"key": "k", "address": "a", "district": "d",
+                              "name": "n", "lat": None}]}
+            appmod._warm_locations_in_background(groups)
+            appmod._warm_running = True      # pretend the first is still going
+            appmod._warm_locations_in_background(groups)
+        finally:
+            appmod.threading.Thread = real_thread
+            appmod._warm_running = False
+        self.assertEqual(len(started), 1)
+
+    def test_nothing_to_fill_starts_nothing(self):
+        from demo import app as appmod
+        appmod._warm_running = False
+        started = []
+        real = appmod.threading.Thread
+        appmod.threading.Thread = lambda *a, **k: started.append(1)
+        try:
+            appmod._warm_locations_in_background(
+                {"pv": [{"key": "k", "lat": 22.4, "lon": 114.0}]})
+        finally:
+            appmod.threading.Thread = real
+        self.assertEqual(started, [])
+
+    def test_a_confirmed_location_is_never_re_looked_up(self):
+        import demo.geo as geo
+        from unittest import mock
+        geo.confirm("warm test key", 22.4, 114.0)
+        called = []
+        with mock.patch.object(geo, "suggest",
+                               side_effect=lambda *a, **k: called.append(1)):
+            out = geo.warm([("warm test key", "a", "d", "n")])
+        self.assertEqual(out["already_have"] if "already_have" in out
+                         else out["already_had_one"], 1)
+        self.assertEqual(called, [])
+        geo.forget("warm test key")
+
+    def test_warm_respects_its_budget(self):
+        import demo.geo as geo
+        from unittest import mock
+        with geo._lock:
+            geo._cache.clear()
+        with mock.patch.object(geo, "suggest", return_value=(22.4, 114.0, "x")):
+            out = geo.warm([(f"budgetk{i}", "a", "d", "n") for i in range(10)],
+                           budget=3)
+        self.assertEqual(out["placed"], 3)
+        with geo._lock:
+            geo._cache.clear()
+
+    def test_warm_survives_a_geocoder_that_raises(self):
+        import demo.geo as geo
+        from unittest import mock
+        with mock.patch.object(geo, "suggest", side_effect=RuntimeError("no")):
+            out = geo.warm([("k", "a", "d", "n")])
+        self.assertEqual(out["no_match"], 1)
+
+    def test_the_manual_warm_route_exists(self):
+        from demo.app import app
+        posts = {r.path for r in app.routes
+                 if hasattr(r, "methods") and "POST" in (r.methods or set())}
+        self.assertIn("/map/warm", posts)
 
 
 if __name__ == "__main__":

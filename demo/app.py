@@ -27,6 +27,7 @@ import json
 import sys
 import logging
 import re
+import threading
 import traceback
 from datetime import date, datetime
 from urllib.parse import quote_plus
@@ -317,6 +318,60 @@ def _intake_rows(
 # Map — every project, on OpenStreetMap
 # ---------------------------------------------------------------------------
 
+#: Set while a background location fill is running, so opening the map
+#: twice in a minute does not start two of them.
+_warm_lock = threading.Lock()
+_warm_running = False
+
+
+def _warm_locations_in_background(groups: dict[str, list[dict[str, Any]]]) -> None:
+    """Kick off a rate-limited geocode pass without blocking the page."""
+    global _warm_running
+    with _warm_lock:
+        if _warm_running:
+            return
+        _warm_running = True
+    targets = [
+        (p["key"], p.get("address", ""), p.get("district", ""), p.get("name", ""))
+        for pins in groups.values() for p in pins
+        if p.get("lat") is None and p.get("key")
+    ]
+    if not targets:
+        with _warm_lock:
+            _warm_running = False
+        return
+
+    def _run() -> None:
+        global _warm_running
+        try:
+            from demo import geo
+            geo.warm(targets)
+        except Exception as e:  # noqa: BLE001
+            log.warning("background location fill failed: %s", e)
+        finally:
+            with _warm_lock:
+                _warm_running = False
+
+    threading.Thread(target=_run, name="map-warm", daemon=True).start()
+
+
+@app.post("/map/warm", include_in_schema=False)
+async def map_warm(request: Request):
+    """Fill in every location that is still missing, on demand.
+
+    The page does this by itself in the background; this route is the
+    manual "do it now" for when the valuer does not want to wait for
+    the next page view.
+    """
+    from demo import mappins
+    groups = mappins.collect()
+    missing = sum(1 for pins in groups.values() for p in pins
+                  if p["lat"] is None)
+    _warm_locations_in_background(groups)
+    return RedirectResponse(
+        f"/map?warmed={missing}", status_code=303)
+
+
 @app.get("/map", response_class=HTMLResponse)
 def map_page(request: Request) -> HTMLResponse:
     """All projects under both tabs, on an open-source map.
@@ -331,6 +386,14 @@ def map_page(request: Request) -> HTMLResponse:
 
     groups = mappins.collect()
     stats = mappins.summary(groups)
+
+    # Anything still without a location gets looked up in the background
+    # so the next visit has pins. This page never waits for it: the
+    # geocoder allows one request a second, and fifty of those is a
+    # minute the valuer would be sitting through.
+    if any(p["lat"] is None for pins in groups.values() for p in pins):
+        _warm_locations_in_background(groups)
+
     return templates.TemplateResponse(
         request,
         "map.html",

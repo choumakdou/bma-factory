@@ -100,23 +100,76 @@
 .lg-geocoded { background: transparent; border: 2px dashed #b85a00; }
 
 /* ---- pins ---- */
+/* ---- pins: numbered tags, not dots ---- */
 .map-marker { background: none; border: none; }
-.map-pin {
-  width: 16px; height: 16px;
-  border-radius: 50%;
-  transform: rotate(-45deg);
-  box-shadow: 0 1px 3px rgba(0,0,0,.35);
+.map-tag {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 5px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: #1a237e;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .38);
+  white-space: nowrap;
 }
-.map-pin.is-confirmed { background: #1a237e; border: 2px solid #fff; }
-.map-pin.is-geocoded {
-  background: #fff8e1;
+/* a suggestion looks provisional at a glance, without opening it */
+.map-tag.is-geocoded {
+  background: #fff;
+  color: #b85a00;
   border: 2px dashed #b85a00;
 }
-.map-pin.is-sbr { background: #0b6b53; }
-.map-pin.is-sbr.is-confirmed { background: #0b6b53; }
+.map-tag.is-sbr { background: #0b6b53; }
+.map-tag.is-sbr.is-geocoded { background: #fff; color: #0b6b53; border-color: #0b6b53; }
+
+/* ---- the view bar over the canvas ---- */
+.map-viewbar {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: .5rem .6rem;
+  border-bottom: 1px solid var(--line);
+  background: #fafbfc;
+}
+.map-viewbtn {
+  font-size: .74rem;
+  padding: .25rem .6rem;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.map-viewbtn:hover { background: #eef1f5; }
+.map-viewbtn.is-active {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+  font-weight: 700;
+}
+.map-viewbtn-warm { border-style: dashed; }
+
+.map-pending {
+  margin: 0 0 .6rem;
+  padding: .4rem .55rem;
+  background: #eef4fd;
+  border-left: 3px solid #1a73e8;
+  border-radius: 2px;
+}
 
 .leaflet-popup-content { margin: .6rem .7rem; font-size: .82rem; }
 .leaflet-popup-content b { font-size: .92rem; }
+.map-popup-no {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px; padding: 0 4px; margin-right: .35rem;
+  border-radius: 9px; background: #1a237e; color: #fff;
+  font-size: .68rem; font-weight: 700; vertical-align: 1px;
+}
 .map-popup-meta { color: var(--muted); margin: .2rem 0 .45rem; }
 .map-popup-actions a,
 .map-popup-actions button {
@@ -167,6 +220,17 @@
 .map-item.is-confirmed { border-left: 3px solid #1a237e; }
 .map-item.is-geocoded { border-left: 3px dashed #b85a00; }
 .map-item.is-unlocated { border-left: 3px solid #d8dce2; }
+.map-item-head { display: flex; gap: .5rem; align-items: flex-start; }
+.map-item-no {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 21px; height: 21px; padding: 0 5px;
+  border-radius: 11px; background: #1a237e; color: #fff;
+  font-size: .7rem; font-weight: 700;
+}
+.map-item.is-geocoded .map-item-no { background: #fff; color: #b85a00; border: 1px dashed #b85a00; }
+.map-item.is-sbr .map-item-no { background: #0b6b53; }
+.map-item.is-flash { outline: 2px solid #1a73e8; outline-offset: -2px; background: #eef4fd; }
 .map-item-name { font-size: .84rem; font-weight: 700; }
 .map-item-addr { font-size: .74rem; color: var(--ink-2); }
 .map-item-meta { font-size: .7rem; color: var(--muted); margin-top: .12rem; }
