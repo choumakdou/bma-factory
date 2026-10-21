@@ -215,6 +215,26 @@
                     — {{ item.evidence_count }} recorded{% endif %}
                   </span>
                 </div>
+
+                {# ---- inline screenshots: thumbnails rendered straight from Drive ---- #}
+                <div class="evidence-screenshots">
+                  {% for e in item.evidence %}
+                    {% if e.file_id %}
+                  <a class="evidence-shot" href="https://drive.google.com/file/d/{{ e.file_id }}/view"
+                     target="_blank" rel="noopener" title="{{ e.ref }} — {{ e.title or e.file_name }}">
+                    <img src="/brochure/evidence/file/{{ e.file_id }}"
+                         alt="{{ e.ref }} — {{ e.title or e.file_name }}"
+                         loading="lazy">
+                    <div class="evidence-shot-cap">
+                      <b>{{ e.ref }}</b>
+                      {% if e.date %}<span class="muted small"> · {{ e.date }}</span>{% endif %}
+                      {% if e.title %}<div class="muted small">{{ e.title }}</div>{% endif %}
+                    </div>
+                  </a>
+                    {% endif %}
+                  {% endfor %}
+                </div>
+
                 <table class="content-table evidence-table">
                   <thead>
                     <tr>

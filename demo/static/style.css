@@ -281,6 +281,43 @@ body.console {
 }
 .head-btn-secondary:hover { background: rgba(255,255,255,0.18); text-decoration: none; }
 
+/* Primary tabs in the header — the two top-level workflows. */
+.head-tab {
+  display: inline-flex;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  padding: 7px 14px;
+  border-radius: 3px 3px 0 0;
+  color: rgba(255,255,255,0.7);
+  text-transform: none;
+  margin-bottom: -1px;
+  border-bottom: 3px solid transparent;
+}
+.head-tab:hover {
+  background: rgba(255,255,255,0.06);
+  color: #fff;
+  text-decoration: none;
+}
+.head-tab-primary.is-active {
+  background: rgba(255,255,255,0.1);
+  color: #fff;
+  border-bottom-color: var(--accent);
+}
+.head-sep {
+  display: inline-block;
+  width: 1px;
+  height: 22px;
+  background: rgba(255,255,255,0.25);
+  margin: 0 4px;
+}
+
+/* PV section heading on the home page. */
+.console-section-title {
+  margin: 0;
+}
+
 .console-main { max-width: 1200px; margin: 24px auto; padding: 0 24px; display: flex; flex-direction: column; gap: 20px; }
 
 .console-section {
@@ -866,4 +903,54 @@ body.console {
   margin-top: .25rem;
   font-size: .7rem;
   max-width: 190px;
+}
+
+/* Inline screenshots — the actual evidence is on the page. */
+.evidence-screenshots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .65rem;
+  margin: .35rem 0 .55rem;
+}
+.evidence-screenshots:empty { display: none; }
+.evidence-shot {
+  display: inline-flex;
+  flex-direction: column;
+  width: 180px;
+  border: 1px solid #e0e3e8;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #fff;
+  text-decoration: none;
+  color: var(--ink);
+  transition: box-shadow .12s ease, border-color .12s ease;
+}
+.evidence-shot:hover {
+  border-color: #1a73e8;
+  box-shadow: 0 1px 4px rgba(26,115,232,.15);
+  text-decoration: none;
+}
+.evidence-shot img {
+  display: block;
+  width: 100%;
+  height: 120px;
+  object-fit: cover;
+  background: #f4f6f8;
+  border-bottom: 1px solid #e0e3e8;
+}
+.evidence-shot img[src$=".pdf"],
+.evidence-shot img[src*="application/pdf"] {
+  object-fit: contain;
+}
+.evidence-shot-cap {
+  padding: .35rem .5rem .45rem;
+  font-size: .72rem;
+  line-height: 1.35;
+  word-wrap: break-word;
+  background: #fafbfc;
+}
+.evidence-shot-cap b {
+  display: inline-block;
+  font-size: .78rem;
+  color: #1a237e;
 }

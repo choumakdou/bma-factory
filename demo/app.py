@@ -37,7 +37,7 @@ if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -815,6 +815,76 @@ def _store_evidence_file(
     except Exception as e:  # noqa: BLE001
         log.warning("could not store the evidence file: %s", e)
         return None
+
+
+# Minimal in-memory cache for file metadata looked up on the proxy route.
+# The Drive call costs ~0.5 s and the same screenshot is fetched by every
+# render of the same project page; without a cache the page grows slow.
+_FROM_MEM: dict[str, tuple[str, str, float]] = {}
+_FROM_CACHE_TTL = 300  # seconds
+
+
+def _drive_file_meta(file_id: str) -> tuple[str, str] | None:
+    """(mime_type, name) for a Drive file. None when missing / unauthorised.
+
+    Cached in-process for five minutes. The token is Bobby's own, so this
+    is a single user and the cache size stays tiny (a handful of small
+    image files at most).
+    """
+    import time
+    now = time.monotonic()
+    hit = _FROM_MEM.get(file_id)
+    if hit and (now - hit[2]) < _FROM_CACHE_TTL:
+        return hit[0], hit[1]
+    try:
+        from demo.oauth import get_drive
+        drive = get_drive()
+        meta = drive.files().get(
+            fileId=file_id, fields="mimeType,name",
+            supportsAllDrives=True,
+        ).execute()
+        mime = str(meta.get("mimeType") or "application/octet-stream")
+        name = str(meta.get("name") or "")
+        _FROM_MEM[file_id] = (mime, name, now)
+        return mime, name
+    except Exception as e:  # noqa: BLE001
+        log.info("could not look up Drive file %s: %s", file_id, e)
+        return None
+
+
+@app.get("/brochure/evidence/file/{file_id}", include_in_schema=False)
+def brochure_evidence_file(file_id: str) -> Response:
+    """Stream a screenshot or PDF that is attached as evidence.
+
+    The brochure page embeds these as inline thumbnails so the valuer
+    can see what was found without opening Drive in a new tab. The
+    Drive file is private, so we proxy it via the OAuth credentials
+    rather than relying on a thumbnail URL.
+    """
+    if not _auth_state()["signed_in"]:
+        # 401 rather than 302 — the browser is rendering an <img> and
+        # following a redirect into a sign-in page is not what we want.
+        raise HTTPException(status_code=401, detail="Sign in to view the screenshot.")
+    meta = _drive_file_meta(file_id)
+    if meta is None:
+        raise HTTPException(status_code=404, detail="Screenshot not found.")
+    mime, _name = meta
+    try:
+        from demo.oauth import get_drive
+        from googleapiclient.http import MediaIoBaseDownload
+        drive = get_drive()
+        buf = io.BytesIO()
+        downloader = MediaIoBaseDownload(buf, drive.files().get_media(fileId=file_id))
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        data = buf.getvalue()
+    except Exception as e:  # noqa: BLE001
+        log.warning("could not stream evidence file %s: %s", file_id, e)
+        raise HTTPException(status_code=502, detail="Could not read the screenshot.") from e
+    # long cache: the bytes only change when the valuer re-attaches.
+    headers = {"Cache-Control": "private, max-age=300"}
+    return Response(content=data, media_type=mime, headers=headers)
 
 
 @app.get("/api/brochure", include_in_schema=False)

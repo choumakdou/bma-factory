@@ -29,6 +29,11 @@
       </div>
     </div>
     <div class="console-head-right">
+      <a class="head-tab head-tab-primary {% if request.url.path == '/' %}is-active{% endif %}"
+         href="/">Property Valuation</a>
+      <a class="head-tab head-tab-primary {% if request.url.path.startswith('/brochure') %}is-active{% endif %}"
+         href="/brochure">Sales Brochure Review</a>
+      <span class="head-sep"></span>
       <a class="head-btn head-btn-secondary" href="/intake">Content</a>
       <a class="head-btn head-btn-secondary" href="/api/cases" target="_blank">JSON</a>
       <a class="head-btn head-btn-primary" href="/diag">Smoke test</a>
@@ -60,9 +65,12 @@
 
   <main class="console-main">
 
-    <!-- Quick actions -->
+    <!-- Quick actions live under Property Valuation in the top header -->
     <section class="console-section">
-      <h2 class="console-section-title">Quick actions</h2>
+      <div class="console-section-head">
+        <h2 class="console-section-title">Property Valuation</h2>
+        <span class="muted small">Quick actions</span>
+      </div>
       <div class="quick-grid">
         <a class="quick-card" href="{% if active_cases %}/case/{{ active_cases[0].id }}{% else %}#{% endif %}">
           <div class="quick-icon">📂</div>
@@ -80,16 +88,6 @@
           <div class="quick-icon">🔍</div>
           <div class="quick-title">QC check</div>
           <div class="quick-sub muted">Standing rules + flags · v0.2</div>
-        </a>
-        <a class="quick-card" href="/intake">
-          <div class="quick-icon">📥</div>
-          <div class="quick-title">Content</div>
-          <div class="quick-sub muted">Excel in Drive, shown here</div>
-        </a>
-        <a class="quick-card" href="/brochure">
-          <div class="quick-icon">📋</div>
-          <div class="quick-title">Sales Brochure Review</div>
-          <div class="quick-sub muted">Every development, every three months</div>
         </a>
         <a class="quick-card" href="#">
           <div class="quick-icon">📈</div>
