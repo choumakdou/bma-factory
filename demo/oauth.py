@@ -573,10 +573,22 @@ def read_auth_context(value: str) -> Optional[dict]:
 
 
 def save_credentials(creds: Credentials) -> None:
-    """Persist the credentials durably: GCS, then Secret Manager, then /tmp."""
-    global _scopes_cache, _scopes_cached
+    """Persist the credentials durably: GCS, then Secret Manager, then /tmp.
+
+    The blob carries ``signed_in_at`` so the app can say when the
+    seven-day Testing-mode expiry lands, instead of the valuer finding
+    out by hitting a broken sign-in.
+    """
+    global _scopes_cache, _scopes_cached, _signed_in_at
     _scopes_cache, _scopes_cached = [], False
     blob = creds.to_json()
+    try:
+        info = json.loads(blob)
+        info["signed_in_at"] = time.time()
+        blob = json.dumps(info)
+        _signed_in_at = info["signed_in_at"]
+    except Exception:  # noqa: BLE001
+        pass
     # Always keep a local copy — it lets this instance use the token straight
     # away without a round trip, and survives a remote-store blip.
     try:
@@ -593,8 +605,53 @@ def save_credentials(creds: Credentials) -> None:
     log.warning("saved OAuth credentials locally only — no durable store available")
 
 
+#: An OAuth client in the "Testing" publishing status issues refresh tokens
+#: that expire after seven days. The exception in Google's documentation
+#: covers apps that request only name / email / profile — we also request
+#: Drive scopes, so the clock applies to us.
+#:
+#: google: "Authorizations by a test user will expire seven days from the
+#: time of consent. If your OAuth client requests an offline access type and
+#: receives a refresh token, that token will also expire. The only exception
+#: to this behavior is if your app requests a subset of the following: name,
+#: email address, and user profile."
+REFRESH_TOKEN_LIFETIME_DAYS = 7
+
+#: Set when a refresh fails because the token is gone for good.
+_token_expired = False
+_signed_in_at: Optional[float] = None
+
+
+def sign_in_expiry() -> Optional[str]:
+    """The date the current sign-in stops working, as YYYY-MM-DD.
+
+    None when nobody is signed in, or when we cannot tell.
+    """
+    if _signed_in_at is None:
+        return None
+    expiry = _signed_in_at + REFRESH_TOKEN_LIFETIME_DAYS * 86400
+    return time.strftime("%Y-%m-%d", time.gmtime(expiry))
+
+
+def token_expired() -> bool:
+    """True when the stored refresh token has been rejected for good."""
+    return _token_expired
+
+
+def _read_signed_in_at(blob: str) -> None:
+    global _signed_in_at
+    try:
+        info = json.loads(blob)
+    except Exception:  # noqa: BLE001
+        return
+    at = info.get("signed_in_at")
+    if isinstance(at, (int, float)):
+        _signed_in_at = float(at)
+
+
 def load_credentials() -> Optional[Credentials]:
     """Load the stored credentials from any durable store, refreshing if expired."""
+    global _token_expired
     blob = _gcs_read()
     if blob is None:
         blob = _secret_read()
@@ -608,12 +665,19 @@ def load_credentials() -> Optional[Credentials]:
     except Exception as e:
         log.warning("failed to load stored credentials: %s", e)
         return None
+    _read_signed_in_at(blob)
     if creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
             save_credentials(creds)
         except Exception as e:
-            log.warning("failed to refresh credentials: %s", e)
+            # "invalid_grant" means the refresh token is gone — in
+            # Testing status that is the seven-day expiry, not a blip.
+            if "invalid_grant" in str(e) or "Token has been expired" in str(e):
+                _token_expired = True
+                log.info("the stored refresh token has expired — sign in again")
+            else:
+                log.warning("failed to refresh credentials: %s", e)
             return None
     return creds
 
@@ -621,8 +685,10 @@ def load_credentials() -> Optional[Credentials]:
 def clear_credentials() -> None:
     """Sign out — drop the local copy and delete the durable copies."""
     global _scopes_cache, _scopes_cached, _profile_cache, _profile_loaded
+    global _signed_in_at, _token_expired
     _scopes_cache, _scopes_cached = [], False
     _profile_cache, _profile_loaded = None, False
+    _signed_in_at, _token_expired = None, False
     if TOKEN_FILE.exists():
         TOKEN_FILE.unlink()
     if TOKEN_BUCKET:

@@ -39,6 +39,11 @@
   <div class="console-banner console-banner-warn">
     <span>⚙ <b>Google Drive not connected.</b> Set <code>GOOGLE_OAUTH_CLIENT_ID</code> and <code>GOOGLE_OAUTH_CLIENT_SECRET</code> in the container env to enable Save-to-Drive.</span>
   </div>
+  {% elif auth.expired %}
+  <div class="console-banner console-banner-warn">
+    <span>🔑 <b>Your Google sign-in has expired.</b> The app is in Testing status, so Google expires the refresh token seven days after each sign-in. One click fixes it — your files are untouched.</span>
+    <a class="head-btn head-btn-primary" href="/auth/login">Sign in with Google</a>
+  </div>
   {% elif not auth.signed_in %}
   <div class="console-banner console-banner-info">
     <span>📂 <b>Sign in to save to Drive.</b> Generated workbooks go to <code>/Outputs/</code> in your Google Drive.</span>
@@ -46,7 +51,7 @@
   </div>
   {% else %}
   <div class="console-banner console-banner-ok">
-    <span>✓ Signed in as <b>{{ auth.user.email }}</b> · workbooks save to <code>/Outputs/</code></span>
+    <span>✓ Signed in as <b>{{ auth.user.email }}</b> · workbooks save to <code>/Outputs/</code>{% if auth.expires_on %} · sign-in valid to <b>{{ auth.expires_on }}</b>{% endif %}</span>
     <form action="/auth/signout" method="post" style="display:inline">
       <button class="head-btn head-btn-secondary" type="submit">Sign out</button>
     </form>

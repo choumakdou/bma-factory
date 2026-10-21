@@ -169,15 +169,9 @@ def index(request: Request) -> HTMLResponse:
     drive_cases = get_drive_cases(folder_ids, whole_drive)
     active_cases  = get_active_cases(folder_ids, whole_drive, drive_cases)
     history_cases = get_history_cases(folder_ids, whole_drive, drive_cases)
-    auth = {"signed_in": False, "user": None, "configured": True}
-    try:
-        from demo.oauth import get_user_info, is_configured
-        auth["configured"] = is_configured()
-        if auth["configured"]:
-            auth["user"] = get_user_info()
-            auth["signed_in"] = auth["user"] is not None
-    except Exception:
-        pass
+    # One implementation of "who is signed in" — the console and the
+    # content page must agree, including on when the sign-in expires.
+    auth = _auth_state()
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -247,14 +241,21 @@ def api_cases() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def _auth_state() -> dict[str, Any]:
-    """Who is signed in, if anyone."""
-    state: dict[str, Any] = {"signed_in": False, "user": None, "configured": True}
+    """Who is signed in, if anyone — and when that sign-in stops working."""
+    state: dict[str, Any] = {
+        "signed_in": False, "user": None, "configured": True,
+        "expires_on": None, "expired": False,
+    }
     try:
-        from demo.oauth import get_user_info, is_configured
+        from demo.oauth import (
+            get_user_info, is_configured, sign_in_expiry, token_expired,
+        )
         state["configured"] = is_configured()
         if state["configured"]:
             state["user"] = get_user_info()
             state["signed_in"] = state["user"] is not None
+            state["expires_on"] = sign_in_expiry()
+            state["expired"] = token_expired()
     except Exception:  # noqa: BLE001
         pass
     return state
@@ -737,12 +738,16 @@ def auth_callback(request: Request, code: str = "", error: str = "",
 
 @app.get("/auth/status")
 def auth_status() -> dict[str, Any]:
-    from demo.oauth import get_user_info, is_configured
+    from demo.oauth import (
+        get_user_info, is_configured, sign_in_expiry, token_expired,
+    )
     info = get_user_info()
     return {
         "oauth_configured": is_configured(),
         "signed_in": info is not None,
         "user": info,
+        "expires_on": sign_in_expiry(),
+        "expired": token_expired(),
     }
 
 

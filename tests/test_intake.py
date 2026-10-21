@@ -422,3 +422,52 @@ class TestCacheVersioning(unittest.TestCase):
         # a different file, or a different mtime, is a different key
         self.assertNotEqual(a, intake._parse_key("F2", "2026-09-21T04:00:00Z"))
         self.assertNotEqual(a, intake._parse_key("F1", "2026-09-22T04:00:00Z"))
+
+
+class TestSignInExpiry(unittest.TestCase):
+    """Testing-status OAuth clients expire their refresh token after seven days."""
+
+    def test_the_lifetime_is_seven_days(self):
+        from demo.oauth import REFRESH_TOKEN_LIFETIME_DAYS
+        self.assertEqual(REFRESH_TOKEN_LIFETIME_DAYS, 7)
+
+    def test_the_expiry_date_is_derived_from_the_sign_in(self):
+        from unittest import mock
+        from demo import oauth
+        # 2026-06-01 00:00 UTC
+        with mock.patch.object(oauth, "_signed_in_at", 1780272000.0):
+            expiry = oauth.sign_in_expiry()
+        self.assertEqual(expiry, "2026-06-08")
+
+    def test_an_expired_token_is_reported(self):
+        from unittest import mock
+        from demo import oauth
+        with mock.patch.object(oauth, "_token_expired", True):
+            self.assertTrue(oauth.token_expired())
+        with mock.patch.object(oauth, "_token_expired", False):
+            self.assertFalse(oauth.token_expired())
+
+    def test_the_console_banner_names_the_expiry(self):
+        from unittest import mock
+        from fastapi.testclient import TestClient
+        from demo.app import app
+        client = TestClient(app)
+        with mock.patch("demo.app._auth_state", return_value={
+                "signed_in": True, "configured": True, "expired": False,
+                "expires_on": "2026-10-28",
+                "user": {"email": "bobby.hk.mak@gmail.com"},
+            }):
+            r = client.get("/")
+        self.assertIn("2026-10-28", r.text)
+
+    def test_an_expired_sign_in_says_so_plainly(self):
+        from unittest import mock
+        from fastapi.testclient import TestClient
+        from demo.app import app
+        client = TestClient(app)
+        with mock.patch("demo.app._auth_state", return_value={
+                "signed_in": False, "configured": True, "expired": True,
+                "expires_on": None, "user": None,
+            }):
+            r = client.get("/")
+        self.assertIn("Your Google sign-in has expired", r.text)
