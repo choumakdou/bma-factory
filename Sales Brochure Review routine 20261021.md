@@ -22,7 +22,8 @@ change, so it is not part of the check.
 | Target Upload Date | **The preceding Friday to the Upload Deadline.** A proposal, not a rule — it is agreed with the client, so it can be changed. |
 | Actual Upload Date | To be confirmed. When it is filled in, it becomes the next round's last round's actual upload date. |
 
-**Worked example — La Aldea (SRPE devId 7825)**
+**Worked example — La Aldea 南屏匯 (SRPE devId 7825)**
+*8 Ping Pak Lane, Ping Shan, Yuen Long · vendor Winful Far East*
 
 ```
 Last round's actual upload    07/08/2026  (a Friday)
@@ -54,8 +55,8 @@ Open the sheet. Its own page carries the version date:
 > *Gazetted under Section 9(1)(a) on DD/MM/YYYY*
 
 **Check every sheet that covers the site.** A development often sits on
-more than one. The Tong Yan San Tsuen / Ping Shan / Hung Shui Kiu area
-sits on three:
+more than one. La Aldea sits on three — it is in both the Ping Shan and
+the North Hung Shui Kiu areas:
 
 | Sheet | Title | Gazetted |
 |---|---|---|
