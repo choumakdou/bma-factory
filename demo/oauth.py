@@ -572,6 +572,13 @@ def read_auth_context(value: str) -> Optional[dict]:
         return None
 
 
+def start_new_sign_in() -> None:
+    """Called on a fresh consent — the seven-day clock starts again."""
+    global _signed_in_at, _token_expired
+    _signed_in_at = None
+    _token_expired = False
+
+
 def save_credentials(creds: Credentials) -> None:
     """Persist the credentials durably: GCS, then Secret Manager, then /tmp.
 
@@ -584,9 +591,13 @@ def save_credentials(creds: Credentials) -> None:
     blob = creds.to_json()
     try:
         info = json.loads(blob)
-        info["signed_in_at"] = time.time()
+        # The consent time does NOT move when the access token is
+        # refreshed. Only a new sign-in starts the seven-day clock, so
+        # this must not be reset on every refresh.
+        if _signed_in_at is None:
+            _signed_in_at = time.time()
+        info["signed_in_at"] = _signed_in_at
         blob = json.dumps(info)
-        _signed_in_at = info["signed_in_at"]
     except Exception:  # noqa: BLE001
         pass
     # Always keep a local copy — it lets this instance use the token straight
@@ -647,6 +658,14 @@ def _read_signed_in_at(blob: str) -> None:
     at = info.get("signed_in_at")
     if isinstance(at, (int, float)):
         _signed_in_at = float(at)
+        return
+    # A token stored before we started recording the consent time. The
+    # access token expires an hour after it is issued, so that is close
+    # enough to tell the valuer when to expect the seven-day expiry.
+    exp = info.get("expiry")
+    if isinstance(exp, (int, float)) and exp > 1_600_000_000:
+        _signed_in_at = float(exp) - 3600
+        log.info("derived the sign-in time from the token expiry")
 
 
 def load_credentials() -> Optional[Credentials]:

@@ -471,3 +471,34 @@ class TestSignInExpiry(unittest.TestCase):
             }):
             r = client.get("/")
         self.assertIn("Your Google sign-in has expired", r.text)
+
+
+class TestConsentClock(unittest.TestCase):
+    """The seven-day clock starts at consent, not at refresh."""
+
+    def test_a_refresh_does_not_move_the_consent_time(self):
+        from unittest import mock
+        from demo import oauth
+        with mock.patch.object(oauth, "_signed_in_at", 1_780_000_000.0), \
+             mock.patch.object(oauth, "_gcs_write_to", return_value=True), \
+             mock.patch.object(oauth, "_secret_write", return_value=False), \
+             mock.patch.object(oauth, "TOKEN_DIR", Path("/tmp/vf-nope")), \
+             mock.patch.object(oauth, "TOKEN_FILE", Path("/tmp/vf-nope/user.json")):
+            creds = mock.Mock()
+            creds.to_json.return_value = '{"token": "x", "expiry": "2026-06-01T00:00:00Z"}'
+            oauth.save_credentials(creds)
+            # the consent time is untouched
+            self.assertEqual(oauth._signed_in_at, 1_780_000_000.0)
+
+    def test_a_new_sign_in_restarts_the_clock(self):
+        from demo import oauth
+        oauth._signed_in_at = 1_780_000_000.0
+        oauth.start_new_sign_in()
+        self.assertIsNone(oauth._signed_in_at)
+
+    def test_an_older_token_falls_back_to_its_expiry(self):
+        from unittest import mock
+        from demo import oauth
+        with mock.patch.object(oauth, "_signed_in_at", None):
+            oauth._read_signed_in_at('{"expiry": 1780272000}')
+            self.assertEqual(oauth._signed_in_at, 1780272000 - 3600)

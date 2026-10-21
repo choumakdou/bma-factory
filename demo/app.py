@@ -726,6 +726,9 @@ def auth_callback(request: Request, code: str = "", error: str = "",
     try:
         flow = get_flow(code_verifier=ctx.get("v"))
         flow.fetch_token(code=code)
+        # A fresh consent restarts the seven-day Testing-mode clock.
+        from demo.oauth import start_new_sign_in
+        start_new_sign_in()
         save_credentials(flow.credentials)
     except Exception as e:
         log.exception("OAuth callback failed")
