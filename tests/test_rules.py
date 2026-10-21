@@ -1,220 +1,261 @@
-"""Property-rules tests.
+"""Section rules — the valuer's own arrangement templates."""
 
-The behaviours that matter are the refusals and the governance signals, not the
-filtering arithmetic. A rules store that silently accepts a pinned time
-adjustment, or that makes a carried-forward rule look freshly reviewed, is worse
-than no rules store at all — it launders a stale judgement into a clean-looking
-number.
-
-    python3 -m unittest discover -s tests -v
-"""
-
-from __future__ import annotations
-
-import sqlite3
+import json
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ingest import rules as R  # noqa: E402
+from demo.rules import (  # noqa: E402
+    SectionRule, apply_rules, known_columns, rules_digest,
+)
 
 
-def fresh() -> tuple[sqlite3.Connection, int]:
-    conn = sqlite3.connect(":memory:")
-    conn.executescript(
-        """
-        CREATE TABLE properties (id INTEGER PRIMARY KEY);
-        INSERT INTO properties (id) VALUES (1);
-        """
-    )
-    conn.executescript(R.SCHEMA_SQL)
-    return conn, 1
+def _sections(headers, rows=None, sheet="S"):
+    from demo import sections as S
+    return [S.Section(
+        id="unknown", label="", kind="table", sheet=sheet,
+        header_row=1, end_row=1 + len(rows or []),
+        headers=list(headers), rows=list(rows or []),
+    )]
 
 
-def seed(conn, pid, **over):
-    kw = dict(
-        rule_type=R.RULE_ADJUSTMENT_OVERRIDE,
-        value={"adj": "location", "pct": -0.04},
-        rationale="backs onto the refuse transfer station",
-        effective_from="2023-01-01",
-        set_by="BMA",
-        last_reviewed="2024-01-01",
-    )
-    kw.update(over)
-    return R.add_rule(conn, pid, **kw)
+class TestMatching(unittest.TestCase):
+    def test_an_exact_column_name_matches(self):
+        r = SectionRule(header_contains=["MEM_NO"])
+        self.assertTrue(r.matches("S", ["MEM_NO", "PRICE"], []))
+
+    def test_a_word_inside_a_longer_column_name_matches(self):
+        """A valuer writes ADOPTED; the column is ADOPTED PSF (SF)."""
+        r = SectionRule(header_contains=["ADOPTED"])
+        self.assertTrue(r.matches("S", ["TIME ADJ %", "ADOPTED PSF (SF)"], []))
+
+    def test_a_word_in_the_middle_does_not_match(self):
+        r = SectionRule(header_contains=["ADOPTED"])
+        self.assertFalse(r.matches("S", ["NOTADOPTEDTHING"], []))
+
+    def test_all_of_the_columns_must_be_present(self):
+        r = SectionRule(header_contains=["MEM_NO", "ADOPTED"])
+        self.assertFalse(r.matches("S", ["MEM_NO", "PRICE"], []))
+        self.assertTrue(r.matches("S", ["MEM_NO", "ADOPTED PSF"], []))
+
+    def test_one_of_the_columns_is_enough(self):
+        r = SectionRule(header_contains_any=["ADOPTED", "WEIGHTED"])
+        self.assertTrue(r.matches("S", ["MEM_NO", "WEIGHTED PSF"], []))
+        self.assertFalse(r.matches("S", ["MEM_NO", "PRICE"], []))
+
+    def test_the_sheet_can_be_narrowed(self):
+        r = SectionRule(sheet="Comps", header_contains=["MEM_NO"])
+        self.assertTrue(r.matches("Comps", ["MEM_NO"], []))
+        self.assertFalse(r.matches("MW Extract", ["MEM_NO"], []))
+
+    def test_a_row_can_be_the_test(self):
+        r = SectionRule(row_column="MEM_NO", row_value="Subject")
+        self.assertTrue(r.matches("S", ["MEM_NO", "X"], [["Subject", "1"]]))
+        self.assertFalse(r.matches("S", ["MEM_NO", "X"], [["Other", "1"]]))
+
+    def test_a_row_test_needs_both_the_column_and_the_value(self):
+        r = SectionRule(row_column="MEM_NO", row_value="")
+        self.assertFalse(r.matches("S", ["MEM_NO"], [["Subject"]]))
+
+    def test_a_disabled_rule_never_matches(self):
+        r = SectionRule(header_contains=["MEM_NO"], enabled=False)
+        self.assertFalse(r.matches("S", ["MEM_NO"], []))
 
 
-class TestGuardrails(unittest.TestCase):
-    def setUp(self):
-        self.conn, self.pid = fresh()
+class TestApply(unittest.TestCase):
+    def test_a_user_rule_wins_over_the_built_in(self):
+        secs = _sections(["MEM_NO", "ADOPTED PSF (SF)"], [["1", "2"]])
+        rule = SectionRule(label="My comps", kind="comps",
+                           header_contains=["MEM_NO", "ADOPTED"])
+        apply_rules(secs, [rule])
+        self.assertEqual(secs[0].kind, "comps")
+        self.assertEqual(secs[0].label, "My comps")
+        self.assertEqual(secs[0].rule_origin, "your rules")
 
-    def test_time_adjustment_cannot_be_pinned(self):
-        with self.assertRaises(ValueError) as c:
-            seed(self.conn, self.pid, value={"adj": "time", "pct": -0.05})
-        self.assertIn("time-varying", str(c.exception))
+    def test_an_unclaimed_block_falls_back_to_the_built_in(self):
+        secs = _sections(["MEM_NO", "ADOPTED PSF (SF)"], [["1", "2"]])
+        rule = SectionRule(label="Never", kind="subject",
+                           header_contains=["NO_SUCH_COLUMN"])
+        apply_rules(secs, [rule])
+        self.assertEqual(secs[0].rule_origin, "built-in")
+        self.assertNotEqual(secs[0].kind, "subject")
 
-    def test_date_adjustment_cannot_be_pinned(self):
-        with self.assertRaises(ValueError):
-            seed(self.conn, self.pid, value={"adj": "date", "pct": 0.02})
+    def test_the_first_rule_to_claim_a_block_wins(self):
+        secs = _sections(["MEM_NO"], [["1"]])
+        first = SectionRule(label="First", kind="comps", header_contains=["MEM_NO"])
+        second = SectionRule(label="Second", kind="subject", header_contains=["MEM_NO"])
+        apply_rules(secs, [first, second])
+        self.assertEqual(secs[0].label, "First")
 
-    def test_rationale_is_mandatory(self):
-        with self.assertRaises(ValueError) as c:
-            seed(self.conn, self.pid, rationale="  ")
-        self.assertIn("rationale", str(c.exception))
-
-    def test_unknown_rule_type_refused(self):
-        with self.assertRaises(ValueError):
-            seed(self.conn, self.pid, rule_type="vibes")
-
-    def test_allowlist_needs_buildings(self):
-        with self.assertRaises(ValueError):
-            R.add_rule(self.conn, self.pid, R.RULE_COMP_ALLOWLIST, {},
-                       rationale="narrow it", effective_from="2023-01-01")
-
-    def test_override_needs_a_percentage(self):
-        with self.assertRaises(ValueError):
-            seed(self.conn, self.pid, value={"adj": "location"})
-
-
-class TestEffectiveDating(unittest.TestCase):
-    def setUp(self):
-        self.conn, self.pid = fresh()
-
-    def test_rule_not_in_force_before_its_start(self):
-        seed(self.conn, self.pid, effective_from="2025-01-01")
-        self.assertEqual(R.effective_rules(self.conn, self.pid, "2024-06-01"), [])
-        self.assertEqual(len(R.effective_rules(self.conn, self.pid, "2025-06-01")), 1)
-
-    def test_ended_rule_drops_out(self):
-        rid = seed(self.conn, self.pid, effective_from="2023-01-01")
-        R.end_rule(self.conn, rid, "2025-01-01")
-        self.assertEqual(len(R.effective_rules(self.conn, self.pid, "2024-06-01")), 1)
-        self.assertEqual(R.effective_rules(self.conn, self.pid, "2025-06-01"), [])
-
-    def test_prior_year_returns_that_years_rules(self):
-        seed(self.conn, self.pid, effective_from="2023-01-01")
-        rid = R.add_rule(self.conn, self.pid, R.RULE_COMP_ALLOWLIST,
-                         {"buildings": ["New One"]}, rationale="widened",
-                         effective_from="2025-01-01", set_by="BMA")
-        prior = R.effective_rules(self.conn, self.pid, "2024-10-01")
-        now = R.effective_rules(self.conn, self.pid, "2026-10-01")
-        # label is "type" when rule_key is empty, "type:key" when it is set
-        self.assertNotIn(R.RULE_COMP_ALLOWLIST, [r.label for r in prior])
-        self.assertIn(R.RULE_COMP_ALLOWLIST, [r.label for r in now])
+    def test_a_rule_claims_only_the_blocks_it_matches(self):
+        secs = _sections(["MEM_NO"], [["1"]]) + _sections(["PRICE"], [["2"]], sheet="T")
+        rule = SectionRule(label="Only the first", kind="comps",
+                           header_contains=["MEM_NO"])
+        apply_rules(secs, [rule])
+        self.assertEqual(secs[0].rule_origin, "your rules")
+        self.assertEqual(secs[1].rule_origin, "built-in")
 
 
-class TestGovernance(unittest.TestCase):
-    def setUp(self):
-        self.conn, self.pid = fresh()
+class TestRoundTrip(unittest.TestCase):
+    def test_a_rule_survives_a_save_and_load(self):
+        r = SectionRule(
+            label="Adopted comps", kind="comps", sheet="Comps",
+            header_contains=["MEM_NO", "ADOPTED"],
+            header_contains_any=["WEIGHTED"],
+            row_column="MEM_NO", row_value="Subject", enabled=False,
+        )
+        back = SectionRule.from_dict(json.loads(json.dumps(r.to_dict())))
+        self.assertEqual(back.to_dict(), r.to_dict())
 
-    def test_carrying_forward_is_not_reviewing(self):
-        """The distinction the whole staleness signal depends on."""
-        rid = seed(self.conn, self.pid, last_reviewed="2023-01-01")
-        for _ in range(3):
-            R.mark_carried(self.conn, [rid])
-        rule = R.effective_rules(self.conn, self.pid, "2026-01-01")[0]
-        self.assertEqual(rule.carried_count, 3)
-        self.assertEqual(rule.last_reviewed, "2023-01-01",
-                         "carrying a rule forward must not reset its review date")
+    def test_a_comma_separated_list_becomes_a_list(self):
+        r = SectionRule.from_dict({"header_contains": "MEM_NO, ADOPTED"})
+        self.assertEqual(r.header_contains, ["MEM_NO", "ADOPTED"])
 
-    def test_review_resets_the_clock(self):
-        rid = seed(self.conn, self.pid, last_reviewed="2023-01-01")
-        R.mark_carried(self.conn, [rid])
-        R.mark_reviewed(self.conn, [rid], "2026-01-01")
-        rule = R.effective_rules(self.conn, self.pid, "2026-01-01")[0]
-        self.assertEqual(rule.last_reviewed, "2026-01-01")
+    def test_an_unknown_kind_falls_back_to_table(self):
+        r = SectionRule.from_dict({"kind": "nonsense"})
+        self.assertEqual(r.kind, "table")
 
-    def test_long_unreviewed_rule_is_flagged(self):
-        seed(self.conn, self.pid, last_reviewed="2022-06-01")
-        st = R.staleness(R.effective_rules(self.conn, self.pid, "2026-01-01"), "2026-01-01")
-        self.assertEqual(len(st), 1)
-        self.assertIn("not reviewed", st[0].reason)
+    def test_the_digest_changes_when_a_rule_changes(self):
+        a = [SectionRule(label="One", kind="comps", header_contains=["A"])]
+        b = [SectionRule(label="One", kind="comps", header_contains=["B"])]
+        self.assertNotEqual(rules_digest(a), rules_digest(b))
 
-    def test_recently_reviewed_rule_is_not_flagged(self):
-        seed(self.conn, self.pid, last_reviewed="2025-11-01")
-        st = R.staleness(R.effective_rules(self.conn, self.pid, "2026-01-01"), "2026-01-01")
-        self.assertEqual(st, [])
+    def test_the_digest_is_stable_for_the_same_rules(self):
+        a = [SectionRule(label="One", kind="comps", header_contains=["A"])]
+        b = [SectionRule(label="One", kind="comps", header_contains=["A"])]
+        self.assertEqual(rules_digest(a), rules_digest(b))
 
 
-class TestApplication(unittest.TestCase):
-    def setUp(self):
-        self.conn, self.pid = fresh()
-        seed(self.conn, self.pid)
-        self.rules = R.effective_rules(self.conn, self.pid, "2026-01-01")
-
-    def test_time_adjustment_is_untouched(self):
-        derived = {"time": 0.08, "location": 0.0}
-        out, _ = R.apply_adjustments(self.rules, derived)
-        self.assertEqual(out["time"], 0.08)
-
-    def test_property_adjustment_is_pinned(self):
-        out, notes = R.apply_adjustments(self.rules, {"time": 0.08, "location": 0.0})
-        self.assertEqual(out["location"], -0.04)
-        self.assertTrue(notes)
-
-    def test_allowlist_keeps_and_drops(self):
-        R.add_rule(self.conn, self.pid, R.RULE_COMP_ALLOWLIST,
-                   {"buildings": ["Tai Wo Estate", "Tai Hong Estate"]},
-                   rationale="old village stock only", effective_from="2023-01-01")
-        rules = R.effective_rules(self.conn, self.pid, "2026-01-01")
-        comps = [{"address": "A", "building": "Tai Wo Estate"},
-                 {"address": "B", "building": "Wa Mei Tuk"}]
-        kept, applied, dropped = R.filter_comps(rules, comps)
-        self.assertEqual([c["address"] for c in kept], ["A"])
-        self.assertEqual(len(dropped), 1)
-        self.assertIn("wa mei tuk", dropped[0])
-
-    def test_denylist_wins_and_both_are_reported_separately(self):
-        R.add_rule(self.conn, self.pid, R.RULE_COMP_ALLOWLIST,
-                   {"buildings": ["A Bldg", "B Bldg"]}, rationale="allow two",
-                   effective_from="2023-01-01")
-        R.add_rule(self.conn, self.pid, R.RULE_COMP_DENYLIST,
-                   {"buildings": ["B Bldg"]}, rationale="but not B",
-                   effective_from="2023-01-01")
-        rules = R.effective_rules(self.conn, self.pid, "2026-01-01")
-        kept, applied, dropped = R.filter_comps(
-            rules, [{"address": "A", "building": "A Bldg"},
-                    {"address": "B", "building": "B Bldg"},
-                    {"address": "C", "building": "C Bldg"}])
-        self.assertEqual([c["address"] for c in kept], ["A"])
-        self.assertEqual(len(dropped), 2)
-        # the *effect* and the *removals* are different facts
-        self.assertTrue(any("narrowed" in a for a in applied))
-        self.assertTrue(all("allowlist" in d or "denylist" in d for d in dropped))
-
-    def test_mandatory_note_is_surfaced(self):
-        R.add_rule(self.conn, self.pid, R.RULE_MANDATORY_NOTE,
-                   {"text": "Restricted comparable range", "insert_in": "§5.2"},
-                   rationale="client asked", effective_from="2023-01-01")
-        rules = R.effective_rules(self.conn, self.pid, "2026-01-01")
-        self.assertIn("§5.2", R.collect_notes(rules)[0])
-
-    def test_no_rules_means_no_change(self):
-        derived = {"time": 0.08, "location": 0.0}
-        out, _ = R.apply_adjustments([], derived)
-        self.assertEqual(out, derived)
+class TestKnownColumns(unittest.TestCase):
+    def test_the_columns_come_back_once_each(self):
+        class P:
+            sections = [
+                {"headers": ["MEM_NO", "PRICE"]},
+                {"headers": ["PRICE", "DATE"]},
+            ]
+        self.assertEqual(known_columns([P()]), ["PRICE", "DATE", "MEM_NO"])
 
 
-class TestMethodDrift(unittest.TestCase):
-    def setUp(self):
-        self.conn, self.pid = fresh()
+class TestTheSheetMap(unittest.TestCase):
+    def test_the_map_shows_the_blocks_and_the_gaps(self):
+        from demo import sheetmap as SM
+        from demo.sample_extract import build_working_file_bytes
+        from demo.intake import parse_workbook_bytes
 
-    def test_added_and_removed_are_distinguished_from_carried(self):
-        a = seed(self.conn, self.pid, effective_from="2023-01-01")
-        R.add_rule(self.conn, self.pid, R.RULE_MANDATORY_NOTE,
-                   {"text": "n", "insert_in": "§5.2"}, rationale="added later",
-                   effective_from="2025-01-01")
-        prior = R.effective_rules(self.conn, self.pid, "2024-10-01")
-        now = R.effective_rules(self.conn, self.pid, "2026-10-01")
-        drift = R.method_drift(prior, now)
-        self.assertIn(R.RULE_ADJUSTMENT_OVERRIDE, drift["rules_carried"])
-        self.assertIn(R.RULE_MANDATORY_NOTE, drift["rules_added"])
-        R.end_rule(self.conn, a, "2025-06-01")
-        drift2 = R.method_drift(prior, R.effective_rules(self.conn, self.pid, "2026-10-01"))
-        self.assertIn(R.RULE_ADJUSTMENT_OVERRIDE, drift2["rules_removed"])
+        parsed = parse_workbook_bytes(build_working_file_bytes())
+        smap = SM.build_map(parsed)
+        self.assertEqual([s["sheet"] for s in smap], ["Subject", "Comps", "MW Extract"])
+        comps = [s for s in smap if s["sheet"] == "Comps"][0]
+        self.assertEqual(len(comps["blocks"]), 1)
+        self.assertEqual(comps["blocks"][0]["kind"], "comps")
+        self.assertEqual(comps["blocks"][0]["header_row"], 1)
+
+    def test_a_gap_is_shown_when_a_block_does_not_start_at_row_one(self):
+        from demo import sheetmap as SM
+        from demo import sections as S
+        secs = [S.Section(id="u", label="", kind="table", sheet="S",
+                          header_row=3, end_row=5, headers=["A", "B"],
+                          rows=[[1, 2], [3, 4]])]
+
+        class Fake:
+            sheets = ["S"]
+            sections = secs
+            sheet_grid = {}
+            sheet_sizes = {"S": 6}
+
+        smap = SM.build_map(Fake())
+        kinds = [(s["kind"], s["from"], s["to"]) for s in smap[0]["band"]]
+        self.assertIn(("gap", 1, 2), kinds)
+        self.assertIn(("table", 3, 5), kinds)
+
+    def test_the_map_takes_a_dict_as_well_as_an_object(self):
+        from demo import sheetmap as SM
+        as_dict = {
+            "sheets": ["S"],
+            "sections": [{"sheet": "S", "kind": "comps", "label": "C",
+                          "header_row": 1, "end_row": 3,
+                          "headers": ["A"], "rows": [[1], [2]]}],
+            "sheet_grid": {},
+            "sheet_sizes": {"S": 3},
+        }
+        smap = SM.build_map(as_dict)
+        self.assertEqual(smap[0]["blocks"][0]["kind"], "comps")
+
+    def test_the_preview_tints_each_row_by_its_section(self):
+        from demo import sheetmap as SM
+        from demo.sample_extract import build_working_file_bytes
+        from demo.intake import parse_workbook_bytes
+
+        parsed = parse_workbook_bytes(build_working_file_bytes())
+        smap = SM.build_map(parsed)
+        rows = SM.preview_rows(smap, "Comps")
+        self.assertTrue(rows)
+        self.assertEqual(rows[0]["row"], 1)
+        self.assertEqual(rows[0]["kind"], "comps")
+
+    def test_the_column_letters_run_a_to_z_then_aa(self):
+        from demo.sheetmap import column_letters
+        self.assertEqual(column_letters(2), ["A", "B"])
+        self.assertEqual(column_letters(26)[-1], "Z")
+        self.assertEqual(column_letters(27)[-1], "AA")
 
 
 if __name__ == "__main__":
-    unittest.main(verbosity=2)
+    unittest.main()
+
+
+class TestStorage(unittest.TestCase):
+    """The rules live in the valuer's Drive."""
+
+    def _fake_drive(self, existing_id=None):
+        calls = {"list": 0, "create": 0, "update": 0}
+
+        class Files:
+            def list(self, **kw):
+                calls["list"] += 1
+                files = [{"id": existing_id, "name": "section-rules.json"}] if existing_id else []
+                return type("R", (), {"execute": lambda self, *a, **k: {"files": files}})()
+
+            def create(self, **kw):
+                calls["create"] += 1
+                return type("R", (), {"execute": lambda self, *a, **k: {"id": "NEW"}})()
+
+            def update(self, **kw):
+                calls["update"] += 1
+                return type("R", (), {"execute": lambda self, *a, **k: {"id": "NEW"}})()
+
+        class Drive:
+            def files(self):
+                return Files()
+
+        return Drive(), calls
+
+    def test_a_new_rules_file_is_created(self):
+        from demo import rules as R
+        drive, calls = self._fake_drive()
+        with mock.patch("demo.drive.app_folder", return_value="FOLDER"), \
+             mock.patch("demo.oauth.get_drive", return_value=drive):
+            ok, msg = R.save_rules([SectionRule(label="One", kind="comps")])
+        self.assertTrue(ok, msg)
+        self.assertEqual(calls["create"], 1)
+        self.assertEqual(calls["update"], 0)
+
+    def test_an_existing_rules_file_is_replaced_not_duplicated(self):
+        from demo import rules as R
+        drive, calls = self._fake_drive(existing_id="OLD")
+        with mock.patch("demo.drive.app_folder", return_value="FOLDER"), \
+             mock.patch("demo.oauth.get_drive", return_value=drive):
+            ok, msg = R.save_rules([SectionRule(label="One", kind="comps")])
+        self.assertTrue(ok, msg)
+        self.assertEqual(calls["update"], 1)
+        self.assertEqual(calls["create"], 0)
+
+    def test_a_failure_is_reported_not_raised(self):
+        from demo import rules as R
+        with mock.patch("demo.drive.app_folder", side_effect=RuntimeError("no drive")):
+            ok, msg = R.save_rules([SectionRule(label="One", kind="comps")])
+        self.assertFalse(ok)
+        self.assertIn("no drive", msg)

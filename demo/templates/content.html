@@ -23,6 +23,7 @@
         {% if parsed.sections %}
         <span class="meta-pill">{{ parsed.sections|length }} section{{ '' if parsed.sections|length == 1 else 's' }}</span>
         {% endif %}
+        <a class="meta-pill" href="/intake/rules" title="Teach the app how your files are arranged">Section rules</a>
       </div>
     </div>
     <div class="case-head-right">
@@ -54,6 +55,98 @@
     <section class="card">
       <h2>Notes</h2>
       <ul class="muted">{% for n in parsed.notes %}<li>{{ n }}</li>{% endfor %}</ul>
+    </section>
+    {% endif %}
+
+    {# ---- how the file is arranged, before the sections themselves ---- #}
+    {% if sheet_map %}
+    <section class="card">
+      <div class="section-head">
+        <h2>How this file is arranged</h2>
+        <div class="section-meta">
+          <a class="dl-link" href="/intake/rules">Change how sections are read →</a>
+        </div>
+      </div>
+      <p class="muted small">
+        The app reads a workbook as a stack of blocks, each with its own
+        header row. This is what it found, and the colours below are the
+        same ones used on the section cards below.
+      </p>
+      <div class="map-legend">
+        {% for k in map_summary %}
+        <span><i class="map-swatch {{ k.colour }}"></i> {{ k.kind }} — {{ k.count }}</span>
+        {% endfor %}
+        <span><i class="map-swatch gap"></i> outside any section</span>
+      </div>
+
+      {% for sm in sheet_map %}
+      <div class="map-sheet">
+        <div class="map-sheet-head">
+          <h3>{{ sm.sheet }}</h3>
+          <span class="muted">
+            {{ sm.rows }} row{{ '' if sm.rows == 1 else 's' }}
+            {% if sm.blocks %}· {{ sm.blocks|length }} block{{ '' if sm.blocks|length == 1 else 's' }}{% endif %}
+          </span>
+        </div>
+
+        {% if sm.band %}
+        <div class="map-band">
+          {% for seg in sm.band %}
+          <span class="map-seg {{ seg.kind }}"
+                title="{{ seg.label or 'outside any section' }} — rows {{ seg.from }}–{{ seg.to }}">
+            {% if seg.rows > 1 %}{{ seg.rows }}{% else %}·{% endif %}
+          </span>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if sm.blocks %}
+        <table class="map-blocks">
+          <thead>
+            <tr><th>Rows</th><th>Section</th><th>Kind</th>
+                <th class="num">Data rows</th><th class="num">Columns</th>
+                <th>Read by</th></tr>
+          </thead>
+          <tbody>
+          {% for b in sm.blocks %}
+            <tr>
+              <td class="num">{{ b.header_row }}–{{ b.end_row }}</td>
+              <td><b>{{ b.label }}</b></td>
+              <td><span class="rule-kind rule-kind-{{ b.kind }}">{{ b.kind }}</span></td>
+              <td class="num">{{ b.data_rows }}</td>
+              <td class="num">{{ b.columns }}</td>
+              <td class="muted small">{{ b.origin }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        {% endif %}
+
+        {% if sm.grid %}
+        <details class="map-detail">
+          <summary class="muted small">Show the original cells</summary>
+          <div class="map-scroll">
+            <table class="map-cells">
+              <thead>
+                <tr>
+                  <th class="rowno">#</th>
+                  {% for c in sm.columns %}<th>{{ c }}</th>{% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+              {% for r in sm.preview %}
+                <tr class="r-{{ r.kind }}{% if r.is_header %} r-head{% endif %}">
+                  <td class="rowno">{{ r.row }}</td>
+                  {% for c in r.cells %}<td title="{{ c }}">{{ c }}</td>{% endfor %}
+                </tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </details>
+        {% endif %}
+      </div>
+      {% endfor %}
     </section>
     {% endif %}
 

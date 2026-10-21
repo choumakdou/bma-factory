@@ -522,3 +522,170 @@ body.console {
 .flag-subject     { background: #e8f0fe; color: #1a73e8; }
 .flag-adopted-comps { background: #e6f4ea; color: #137333; }
 .flag-mw-extract  { background: #fef7e0; color: #b06000; }
+
+/* --- Section rules ---------------------------------------------------- */
+
+.rule-kind {
+  display: inline-block;
+  padding: .1rem .45rem;
+  border-radius: 3px;
+  font-size: .72rem;
+  font-weight: 600;
+  letter-spacing: .01em;
+  white-space: nowrap;
+}
+.rule-kind-subject { background: #e8f0fe; color: #1a73e8; }
+.rule-kind-comps   { background: #e6f4ea; color: #137333; }
+.rule-kind-extract { background: #fef7e0; color: #b06000; }
+.rule-kind-table   { background: #f1f3f4; color: #5f6368; }
+
+.rule-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: .6rem .9rem;
+  margin: .7rem 0 1rem;
+}
+.rule-form label {
+  display: flex;
+  flex-direction: column;
+  gap: .25rem;
+  font-size: .78rem;
+  color: var(--ink-2);
+}
+.rule-form input,
+.rule-form select {
+  padding: .4rem .5rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font: inherit;
+  font-size: .85rem;
+  background: #fff;
+  color: var(--ink);
+}
+.rule-form input:focus,
+.rule-form select:focus {
+  outline: 2px solid #1a73e8;
+  outline-offset: -1px;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  padding: .1rem .3rem;
+  font: inherit;
+  font-size: .78rem;
+  color: #1a73e8;
+  cursor: pointer;
+}
+.link-btn.danger { color: #c5221f; }
+.link-btn:hover { text-decoration: underline; }
+
+.rule-off { opacity: .5; }
+
+/* --- The sheet map ----------------------------------------------------- */
+
+.map-sheet { margin-bottom: 1.4rem; }
+.map-sheet-head {
+  display: flex;
+  align-items: baseline;
+  gap: .7rem;
+  flex-wrap: wrap;
+  margin-bottom: .45rem;
+}
+.map-sheet-head h3 { margin: 0; font-size: .95rem; }
+.map-sheet-head .muted { font-size: .78rem; }
+
+/* The band — one cell per row of the sheet, in the sheet's own order.
+   This is the picture of how the file is arranged. */
+.map-band {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: .45rem;
+  background: #f8f9fa;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+.map-seg {
+  height: 20px;
+  min-width: 20px;
+  border-radius: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: .66rem;
+  font-weight: 600;
+  color: #fff;
+  padding: 0 .3rem;
+}
+.map-seg.gap      { background: repeating-linear-gradient(45deg, #e8eaed, #e8eaed 4px, #f1f3f4 4px, #f1f3f4 8px); color: #80868b; }
+.map-seg.subject  { background: #1a73e8; }
+.map-seg.comps    { background: #188038; }
+.map-seg.extract   { background: #b06000; }
+.map-seg.table    { background: #9aa0a6; }
+
+.map-legend {
+  display: flex;
+  gap: .9rem;
+  flex-wrap: wrap;
+  margin: .5rem 0 .2rem;
+  font-size: .74rem;
+  color: var(--ink-2);
+}
+.map-legend span { display: flex; align-items: center; gap: .3rem; }
+.map-swatch {
+  width: 11px; height: 11px; border-radius: 2px; display: inline-block;
+}
+.map-swatch.subject { background: #1a73e8; }
+.map-swatch.comps   { background: #188038; }
+.map-swatch.extract  { background: #b06000; }
+.map-swatch.table   { background: #9aa0a6; }
+.map-swatch.gap     { background: #e8eaed; border: 1px solid #dadce0; }
+
+.map-blocks { width: 100%; border-collapse: collapse; margin-top: .6rem; font-size: .8rem; }
+.map-blocks th {
+  text-align: left; font-weight: 600; font-size: .72rem;
+  color: var(--ink-2); padding: .3rem .45rem;
+  border-bottom: 1px solid var(--line); white-space: nowrap;
+}
+.map-blocks td { padding: .35rem .45rem; border-bottom: 1px solid #f1f3f4; vertical-align: top; }
+.map-blocks td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* The original cells, with the section tinted behind each row. */
+.map-cells { width: 100%; border-collapse: collapse; font-size: .72rem; }
+.map-cells th {
+  background: #f1f3f4; color: var(--ink-2); font-weight: 600;
+  padding: .25rem .4rem; text-align: left; white-space: nowrap;
+  border-bottom: 1px solid var(--line); position: sticky; top: 0;
+}
+.map-cells td {
+  padding: .22rem .4rem; border-bottom: 1px solid #f8f9fa;
+  max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.map-cells td.rowno {
+  color: #9aa0a6; text-align: right; width: 3ch; font-variant-numeric: tabular-nums;
+}
+.map-cells tr.r-subject td { background: #f4f8fe; }
+.map-cells tr.r-comps   td { background: #f2faf4; }
+.map-cells tr.r-extract  td { background: #fdf8ee; }
+.map-cells tr.r-table   td { background: #f8f9fa; }
+.map-cells tr.r-gap     td { background: #fff; color: #bdc1c6; }
+.map-cells tr.r-head    td { font-weight: 700; border-bottom: 2px solid #dadce0; }
+.map-detail { margin-top: .6rem; }
+.map-detail summary { cursor: pointer; }
+.map-scroll {
+  max-height: 460px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  margin-top: .4rem;
+}
+.column-ref code {
+  display: inline-block;
+  margin: 0 .3rem .3rem 0;
+  padding: .1rem .35rem;
+  background: #f1f3f4;
+  border-radius: 3px;
+  font-size: .72rem;
+  color: #3c4043;
+}

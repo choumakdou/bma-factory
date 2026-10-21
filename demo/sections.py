@@ -111,12 +111,17 @@ class Section:
     kind: str                       # subject | comps | extract | table
     sheet: str
     header_row: int
+    #: The last row of the block, as a spreadsheet row number.
+    end_row: int = 0
     headers: list[str] = field(default_factory=list)
     rows: list[list[Any]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     stats: dict[str, Any] = field(default_factory=dict)
     qc_counts: dict[str, int] = field(default_factory=dict)
     project: Optional[dict[str, Any]] = None
+    #: Which of the valuer's rules claimed this block, if any.
+    rule_id: str = ""
+    rule_origin: str = ""
 
     @property
     def adjustment_columns(self) -> list[str]:
@@ -139,6 +144,7 @@ class Section:
             "kind": self.kind,
             "sheet": self.sheet,
             "header_row": self.header_row,
+            "end_row": self.end_row,
             "headers": self.headers,
             "rows": _jsonable_rows(self.rows),
             "notes": self.notes,
@@ -146,6 +152,8 @@ class Section:
             "qc_counts": self.qc_counts,
             "project": self.project,
             "adjustment_columns": self.adjustment_columns,
+            "rule_id": self.rule_id,
+            "rule_origin": self.rule_origin,
         }
 
 
@@ -236,6 +244,7 @@ def split_sheet(sheet_name: str, rows: list[list[Any]]) -> list[Section]:
             kind="table",
             sheet=sheet_name,
             header_row=i + 1,
+            end_row=max(i + 1, j),
             headers=headers,
             rows=body,
         ))
@@ -513,8 +522,15 @@ def detect_section(headers: list[str]) -> SectionSpec:
     return SECTION_SPECS[-1]
 
 
-def classify(sections: list[Section]) -> list[Section]:
-    """Give every block a type, a label and its stats."""
+def classify(sections: list[Section], rules: Optional[list[Any]] = None) -> list[Section]:
+    """Give every block a type, a label and its stats.
+
+    The valuer's own rules are tried first — a rule that matches wins
+    outright. The built-in detection is the fallback, not the authority.
+    """
+    if rules:
+        from demo import rules as R
+        return R.apply_rules(sections, rules)
     for section in sections:
         spec = detect_section(section.headers)
         section.id = spec.id
@@ -528,6 +544,10 @@ def classify(sections: list[Section]) -> list[Section]:
     return sections
 
 
-def sections_from_sheet(sheet_name: str, rows: list[list[Any]]) -> list[Section]:
+def sections_from_sheet(
+    sheet_name: str,
+    rows: list[list[Any]],
+    rules: Optional[list[Any]] = None,
+) -> list[Section]:
     """Blocks of one sheet, classified."""
-    return classify(split_sheet(sheet_name, rows))
+    return classify(split_sheet(sheet_name, rows), rules)

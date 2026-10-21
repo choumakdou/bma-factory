@@ -95,6 +95,13 @@ class ParsedWorkbook:
     #: with an adjustment ladder get the adjustment columns marked, the
     #: raw extract gets the QC flags.
     sections: list[dict[str, Any]] = field(default_factory=list)
+    #: A capped copy of the original sheets, so the content page can show
+    #: the file as it stands with the detected sections marked on it.
+    #: Capped hard — this is a map, not a copy of the workbook.
+    sheet_grid: dict[str, list[list[Any]]] = field(default_factory=dict)
+    #: How many rows each sheet actually has, so the map can show the
+    #: rows that fall outside every section.
+    sheet_sizes: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -112,6 +119,8 @@ class ParsedWorkbook:
             "notes": self.notes,
             "error": self.error,
             "sections": self.sections,
+            "sheet_grid": _jsonable_grid(self.sheet_grid),
+            "sheet_sizes": self.sheet_sizes,
         }
 
     @classmethod
@@ -131,10 +140,39 @@ class ParsedWorkbook:
             notes=d.get("notes", []),
             error=d.get("error"),
             sections=d.get("sections", []),
+            sheet_grid=d.get("sheet_grid", {}) or {},
+            sheet_sizes=d.get("sheet_sizes", {}) or {},
         )
 
 
 # --- helpers ---------------------------------------------------------------
+
+#: How much of a sheet the highlighted map keeps. Enough to show the
+#: arrangement of a working file, small enough to stay a map.
+GRID_MAX_ROWS = 150
+GRID_MAX_COLS = 40
+
+
+def _jsonable_grid(grid: dict[str, list[list[Any]]]) -> dict[str, list[list[Any]]]:
+    """Make a sheet grid safe for JSON and small enough to cache."""
+    out: dict[str, list[list[Any]]] = {}
+    for name, rows in (grid or {}).items():
+        clean: list[list[Any]] = []
+        for r in rows[:GRID_MAX_ROWS]:
+            row: list[Any] = []
+            for v in r[:GRID_MAX_COLS]:
+                if isinstance(v, datetime):
+                    row.append(v.isoformat())
+                elif isinstance(v, date):
+                    row.append(v.isoformat())
+                elif isinstance(v, (int, float, str, bool)) or v is None:
+                    row.append(v)
+                else:
+                    row.append(str(v))
+            clean.append(row)
+        out[name] = clean
+    return out
+
 
 def _norm_header(v: Any) -> str:
     """Header cell -> a comparable token."""
@@ -512,11 +550,22 @@ def detect_format(headers: list[str]) -> FormatSpec:
     return FORMATS[-1]
 
 
-def _extract_sections(wb: Any, sheet_names: list[str]) -> list[dict[str, Any]]:
-    """Every sheet in the workbook, split into recognised blocks."""
+def _extract_sections(
+    wb: Any,
+    sheet_names: list[str],
+    rules: Optional[list[Any]] = None,
+) -> tuple[list[dict[str, Any]], dict[str, list[list[Any]]], dict[str, int]]:
+    """Every sheet in the workbook, split into recognised blocks.
+
+    Also returns a capped copy of the sheets and their true sizes, so
+    the content page can show the file as it stands with the detected
+    sections marked on it.
+    """
     from demo import sections as S
 
     out: list[dict[str, Any]] = []
+    grid: dict[str, list[list[Any]]] = {}
+    sizes: dict[str, int] = {}
     for name in sheet_names:
         try:
             ws = wb[name]
@@ -524,18 +573,26 @@ def _extract_sections(wb: Any, sheet_names: list[str]) -> list[dict[str, Any]]:
         except Exception as e:  # noqa: BLE001
             out.append({
                 "id": "table", "label": name, "kind": "table",
-                "sheet": name, "header_row": 0, "headers": [], "rows": [],
+                "sheet": name, "header_row": 0, "end_row": 0, "headers": [], "rows": [],
                 "notes": [f"could not read this sheet: {e}"],
                 "stats": {}, "qc_counts": {}, "project": None,
                 "adjustment_columns": [],
+                "rule_id": "", "rule_origin": "",
             })
             continue
-        for section in S.sections_from_sheet(name, rows):
+        sizes[name] = len(rows)
+        blocks = S.sections_from_sheet(name, rows, rules)
+        if blocks:
+            grid[name] = rows[:GRID_MAX_ROWS]
+        for section in blocks:
             out.append(section.to_dict())
-    return out
+    return out, grid, sizes
 
 
-def parse_workbook_bytes(data: bytes) -> ParsedWorkbook:
+def parse_workbook_bytes(
+    data: bytes,
+    rules: Optional[list[Any]] = None,
+) -> ParsedWorkbook:
     """Bytes of an .xlsx/.xlsm -> ParsedWorkbook.
 
     Never raises: a broken workbook comes back as a ParsedWorkbook with
@@ -556,7 +613,9 @@ def parse_workbook_bytes(data: bytes) -> ParsedWorkbook:
         spec = detect_format(headers)
         parsed = spec.parse(sheet_name, headers, rows)
         parsed.sheets = sheet_names
-        parsed.sections = _extract_sections(wb, sheet_names)
+        parsed.sections, parsed.sheet_grid, parsed.sheet_sizes = _extract_sections(
+            wb, sheet_names, rules
+        )
         return parsed
     except Exception as e:  # noqa: BLE001
         return ParsedWorkbook(
@@ -846,9 +905,9 @@ def _parse_version() -> str:
     return _parse_version_cache
 
 
-def _parse_key(file_id: str, modified_time: str) -> str:
+def _parse_key(file_id: str, modified_time: str, rules_digest: str = "") -> str:
     stamp = (modified_time or "").replace(":", "").replace("-", "").replace(".", "")
-    return f"{file_id}-{stamp}-{_parse_version()}"
+    return f"{file_id}-{stamp}-{_parse_version()}-{rules_digest}"
 
 
 def _load_parsed_cache() -> None:
@@ -880,10 +939,14 @@ def _save_parsed_cache() -> None:
         log.warning("could not save the parsed-workbook cache: %s", e)
 
 
-def load_cached(file_id: str, modified_time: str) -> Optional[ParsedWorkbook]:
+def load_cached(
+    file_id: str,
+    modified_time: str,
+    rules_digest: str = "",
+) -> Optional[ParsedWorkbook]:
     """A previously parsed workbook, if the cache has it."""
     _load_parsed_cache()
-    key = _parse_key(file_id, modified_time)
+    key = _parse_key(file_id, modified_time, rules_digest)
     with _parsed_lock:
         blob = _parsed_cache.get(key)
     if not blob:
@@ -891,19 +954,51 @@ def load_cached(file_id: str, modified_time: str) -> Optional[ParsedWorkbook]:
     return ParsedWorkbook.from_dict(blob)
 
 
-def store_cached(file_id: str, modified_time: str, parsed: ParsedWorkbook) -> bool:
+def store_cached(
+    file_id: str,
+    modified_time: str,
+    parsed: ParsedWorkbook,
+    rules_digest: str = "",
+) -> bool:
     """Cache a parsed workbook so the console does not re-parse on every page view."""
     _load_parsed_cache()
-    key = _parse_key(file_id, modified_time)
+    key = _parse_key(file_id, modified_time, rules_digest)
     with _parsed_lock:
         _parsed_cache[key] = parsed.to_dict()
     _save_parsed_cache()
     return True
 
 
+def invalidate_parse_cache() -> None:
+    """Throw away the parsed workbooks — used after a rule change.
+
+    The rules are part of the cache key, so new parses land under a new
+    key anyway. This clears the old ones so the cache does not grow
+    without bound and a stale arrangement cannot be served.
+    """
+    global _parsed_loaded
+    with _parsed_lock:
+        _parsed_cache.clear()
+    # Persist the empty state, or the next load would read the old
+    # entries back out of Cloud Storage.
+    _save_parsed_cache()
+    _parsed_loaded = True
+
+
 def parse_drive_file(f: DriveFile) -> ParsedWorkbook:
-    """Cached parse of a Drive workbook."""
-    cached = load_cached(f.id, f.modified_time)
+    """Cached parse of a Drive workbook.
+
+    The valuer's section rules are applied here, and the rules are part
+    of the cache key — so changing a rule re-parses the file instead of
+    serving the old arrangement.
+    """
+    from demo import rules as R
+    try:
+        active = R.current_rules()
+    except Exception:  # noqa: BLE001
+        active = []
+    digest = R.rules_digest(active) if active else ""
+    cached = load_cached(f.id, f.modified_time, digest)
     if cached is not None:
         return cached
     try:
@@ -915,7 +1010,7 @@ def parse_drive_file(f: DriveFile) -> ParsedWorkbook:
             sheet_name="",
             error=f"{type(e).__name__}: {e}",
         )
-    parsed = parse_workbook_bytes(data)
+    parsed = parse_workbook_bytes(data, active)
     store_cached(f.id, f.modified_time, parsed)
     return parsed
 

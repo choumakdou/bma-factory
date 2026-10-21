@@ -26,6 +26,7 @@ import io
 import sys
 import logging
 import traceback
+from urllib.parse import quote_plus
 from pathlib import Path
 from typing import Any
 
@@ -412,6 +413,179 @@ def drive_organise() -> JSONResponse:
     return JSONResponse({"ok": not report.get("errors"), "report": report})
 
 
+# ---------------------------------------------------------------------------
+# Section rules — the valuer's own arrangement templates
+# ---------------------------------------------------------------------------
+
+@app.get("/intake/rules", response_class=HTMLResponse)
+def rules_page(request: Request) -> HTMLResponse:
+    """Build and edit the rules that decide what a section is."""
+    from demo import rules as R
+
+    auth = _auth_state()
+    rules = R.current_rules()
+    # The files the rules would be tested against.
+    candidates: list[dict[str, Any]] = []
+    columns: list[str] = []
+    if auth["signed_in"]:
+        try:
+            from demo import intake
+            parsed_files = []
+            for f in intake.list_drive_workbooks()[:20]:
+                candidates.append({"id": f.id, "name": f.name})
+                try:
+                    parsed_files.append(intake.parse_drive_file(f))
+                except Exception:  # noqa: BLE001
+                    continue
+            columns = R.known_columns(parsed_files)
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not list candidates for the rules page: %s", e)
+    return templates.TemplateResponse(
+        request,
+        "rules.html",
+        {
+            "auth": auth,
+            "rules": [r.to_dict() for r in rules],
+            "kinds": [{"id": k, "label": R.KIND_LABELS[k]} for k in R.KINDS],
+            "candidates": candidates,
+            "columns": columns,
+            "saved": request.query_params.get("saved"),
+            "error": request.query_params.get("error"),
+        },
+    )
+
+
+@app.post("/intake/rules", include_in_schema=False)
+async def rules_save(request: Request):
+    """Add, change, reorder or delete a rule."""
+    from demo import rules as R
+
+    form = await request.form()
+    action = str(form.get("action") or "add")
+    # Read fresh, not the cached copy — an edit must not be made against
+    # a list that is up to a minute out of date.
+    current = R.load_rules()
+
+    def _by_id(rid: str) -> R.SectionRule | None:
+        return next((r for r in current if r.id == rid), None)
+
+    def _from_form(d: dict[str, Any]) -> R.SectionRule:
+        return R.SectionRule.from_dict(d)
+
+    message = ""
+    ok = True
+
+    if action == "delete":
+        rid = str(form.get("rule_id") or "")
+        current = [r for r in current if r.id != rid]
+        message = "Rule deleted." if _by_id(rid) else "That rule was already gone."
+
+    elif action == "toggle":
+        rid = str(form.get("rule_id") or "")
+        target = _by_id(rid)
+        if target is not None:
+            target.enabled = not target.enabled
+            message = "Rule turned on." if target.enabled else "Rule turned off."
+
+    elif action == "move":
+        rid = str(form.get("rule_id") or "")
+        direction = str(form.get("direction") or "up")
+        idx = next((i for i, r in enumerate(current) if r.id == rid), -1)
+        if idx >= 0:
+            j = idx - 1 if direction == "up" else idx + 1
+            if 0 <= j < len(current):
+                current[idx], current[j] = current[j], current[idx]
+                message = "Order changed."
+
+    elif action == "add":
+        rule = _from_form({
+            "label": form.get("label"),
+            "kind": form.get("kind"),
+            "sheet": form.get("sheet"),
+            "header_contains": form.get("header_contains"),
+            "header_contains_any": form.get("header_contains_any"),
+            "row_column": form.get("row_column"),
+            "row_value": form.get("row_value"),
+        })
+        if not rule.label.strip():
+            ok, message = False, "Give the rule a name so you can recognise it."
+        elif not (rule.header_contains or rule.header_contains_any
+                  or (rule.row_column and rule.row_value)):
+            ok, message = False, "A rule needs something to match on."
+        else:
+            current.append(rule)
+            message = "Rule added."
+
+    elif action == "update":
+        rid = str(form.get("rule_id") or "")
+        target = _by_id(rid)
+        if target is None:
+            ok, message = False, "That rule no longer exists."
+        else:
+            updated = _from_form({
+                "id": rid,
+                "label": form.get("label"),
+                "kind": form.get("kind"),
+                "sheet": form.get("sheet"),
+                "header_contains": form.get("header_contains"),
+                "header_contains_any": form.get("header_contains_any"),
+                "row_column": form.get("row_column"),
+                "row_value": form.get("row_value"),
+                "enabled": target.enabled,
+            })
+            current = [updated if r.id == rid else r for r in current]
+            message = "Rule changed."
+
+    if ok:
+        written, detail = R.save_rules(current)
+        if not written:
+            ok, message = False, f"Could not save: {detail}"
+        else:
+            R.invalidate_cache()
+            # A rule change changes what a file means, so the parsed
+            # workbooks have to be read again.
+            from demo import intake
+            intake.invalidate_parse_cache()
+
+    url = "/intake/rules"
+    if message:
+        url += f"?{('error' if not ok else 'saved')}={quote_plus(message)}"
+    return RedirectResponse(url, status_code=303)
+
+
+@app.get("/api/rules", include_in_schema=False)
+def rules_api() -> JSONResponse:
+    """The rules as JSON, and what they would match."""
+    from demo import rules as R
+
+    rules = R.current_rules()
+    out: list[dict[str, Any]] = []
+    for r in rules:
+        d = r.to_dict()
+        d["describe"] = r.describe()
+        out.append(d)
+    return JSONResponse({"rules": out, "kinds": list(R.KINDS)})
+
+
+@app.get("/api/rules/test", include_in_schema=False)
+def rules_test(file_id: str = "") -> JSONResponse:
+    """Show which rule claims which block of a file."""
+    from demo import intake
+    from demo import rules as R
+    from demo import sheetmap as SM
+
+    f = intake.find_file(file_id)
+    if f is None:
+        return JSONResponse({"error": "file not found"}, status_code=404)
+    parsed = intake.parse_drive_file(f)
+    sheet_map = SM.build_map(parsed)
+    return JSONResponse({
+        "file": f.to_dict(),
+        "map": sheet_map,
+        "summary": SM.summary(sheet_map),
+    })
+
+
 @app.get("/content/{file_id}", response_class=HTMLResponse)
 def content_page(request: Request, file_id: str) -> HTMLResponse:
     """The content of one workbook, section by section."""
@@ -425,6 +599,18 @@ def content_page(request: Request, file_id: str) -> HTMLResponse:
     # Prefer the section that carries the adopted comparables over the
     # raw extract — the adjustments beside them are the better evidence.
     project = intake.project_from_sections(parsed)
+
+    # The map — how the file is arranged, and which rows each section
+    # claimed. The preview rows are attached here rather than in the
+    # template so the template stays about layout.
+    from demo import sheetmap as SM
+    sheet_map = SM.build_map(parsed)
+    for sm in sheet_map:
+        sm["preview"] = SM.preview_rows(sheet_map, sm["sheet"])
+        width = max((len(r.get("cells") or []) for r in sm["preview"]), default=0)
+        sm["columns"] = SM.column_letters(width)
+    map_summary = SM.summary(sheet_map)
+
     return templates.TemplateResponse(
         request,
         "content.html",
@@ -434,6 +620,8 @@ def content_page(request: Request, file_id: str) -> HTMLResponse:
             "parsed": parsed.to_dict(),
             "project": project,
             "shown_rows": 200,
+            "sheet_map": sheet_map,
+            "map_summary": map_summary,
         },
     )
 

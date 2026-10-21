@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Section rules · BMA Factory</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="case-head">
+    <div class="case-head-left">
+      <div class="case-ref-row">
+        <a class="case-back" href="/">← Console</a>
+        <span class="case-ref-sep">·</span>
+        <a class="case-back" href="/intake">Content</a>
+        <span class="case-ref-sep">·</span>
+        <span class="case-ref">Section rules</span>
+      </div>
+      <h1>Section rules</h1>
+      <div class="case-addr">Teach the app how your working files are put together</div>
+    </div>
+  </header>
+
+  <main class="case-main">
+    {% if saved %}
+    <section class="card" style="border-left:3px solid #188038">
+      <p style="margin:0"><b>{{ saved }}</b></p>
+    </section>
+    {% endif %}
+    {% if error %}
+    <section class="card" style="border-left:3px solid #c5221f">
+      <p style="margin:0"><b>{{ error }}</b></p>
+    </section>
+    {% endif %}
+
+    {% if not auth.signed_in %}
+    <section class="card">
+      <h2>Sign in first</h2>
+      <p class="muted">
+        The rules are stored in your own Drive, in
+        <code>/bma-factory/Valuation/Templates/section-rules.json</code>,
+        so they travel with your files and can be edited by hand as well
+        as here.
+      </p>
+      <a class="gen-btn" href="/auth/login">Sign in with Google</a>
+    </section>
+    {% else %}
+
+    <section class="card">
+      <h2>What a rule is</h2>
+      <p class="muted">
+        A rule says: <i>a block of a sheet with these column names is
+        this kind of section</i>. The app tries your rules first, in the
+        order you put them here. Anything a rule does not claim falls back
+        to the built-in detection.
+      </p>
+      <p class="muted">
+        The four kinds are what the content page knows how to draw:
+      </p>
+      <p class="muted small">
+        {% for k in kinds %}
+          <span class="rule-kind rule-kind-{{ k.id }}">{{ k.label }}</span>
+        {% endfor %}
+      </p>
+      <p class="muted small">
+        A rule matches on any of: every one of the columns in
+        <b>Has all of these columns</b>; at least one of the columns in
+        <b>Has one of these columns</b>; or a row where
+        <b>Column</b> equals <b>Value</b>. Leave the column boxes empty
+        to skip that test.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Your rules</h2>
+      {% if not rules %}
+      <p class="muted">
+        No rules yet. The app is using its built-in detection, which knows
+        a Memfus Wong extract and an adjustments table. Add a rule below
+        when a file of yours is arranged differently.
+      </p>
+      {% else %}
+      <table class="content-table">
+        <thead>
+          <tr>
+            <th>Order</th><th>Name</th><th>Kind</th><th>Matches</th>
+            <th>Sheet</th><th>On</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for r in rules %}
+          <tr class="{{ 'rule-off' if not r.enabled else '' }}">
+            <td class="muted small">{{ loop.index }}</td>
+            <td><b>{{ r.label }}</b></td>
+            <td><span class="rule-kind rule-kind-{{ r.kind }}">{{ r.kind }}</span></td>
+            <td class="muted small">
+              {% if r.header_contains %}<b>all:</b> {{ r.header_contains | join(', ') }}<br>{% endif %}
+              {% if r.header_contains_any %}<b>any:</b> {{ r.header_contains_any | join(', ') }}<br>{% endif %}
+              {% if r.row_column and r.row_value %}<b>row:</b> {{ r.row_column }} = {{ r.row_value }}{% endif %}
+            </td>
+            <td class="muted small">{{ r.sheet or 'any sheet' }}</td>
+            <td>
+              <form method="post" action="/intake/rules" style="display:inline">
+                <input type="hidden" name="action" value="toggle">
+                <input type="hidden" name="rule_id" value="{{ r.id }}">
+                <button class="link-btn" type="submit">{{ 'on' if r.enabled else 'off' }}</button>
+              </form>
+            </td>
+            <td class="small">
+              <form method="post" action="/intake/rules" style="display:inline">
+                <input type="hidden" name="action" value="move">
+                <input type="hidden" name="rule_id" value="{{ r.id }}">
+                <input type="hidden" name="direction" value="up">
+                <button class="link-btn" type="submit">↑</button>
+              </form>
+              <form method="post" action="/intake/rules" style="display:inline">
+                <input type="hidden" name="action" value="move">
+                <input type="hidden" name="rule_id" value="{{ r.id }}">
+                <input type="hidden" name="direction" value="down">
+                <button class="link-btn" type="submit">↓</button>
+              </form>
+              <form method="post" action="/intake/rules" style="display:inline"
+                    onsubmit="return confirm('Delete this rule?')">
+                <input type="hidden" name="action" value="delete">
+                <input type="hidden" name="rule_id" value="{{ r.id }}">
+                <button class="link-btn danger" type="submit">Delete</button>
+              </form>
+            </td>
+          </tr>
+          <tr>
+            <td></td>
+            <td colspan="6">
+              <details>
+                <summary class="muted small">Edit</summary>
+                <form method="post" action="/intake/rules" class="rule-form">
+                  <input type="hidden" name="action" value="update">
+                  <input type="hidden" name="rule_id" value="{{ r.id }}">
+                  <div class="rule-form-grid">
+                    <label>Name
+                      <input name="label" value="{{ r.label }}" required>
+                    </label>
+                    <label>Kind
+                      <select name="kind">
+                        {% for k in kinds %}
+                        <option value="{{ k.id }}" {% if k.id == r.kind %}selected{% endif %}>{{ k.label }}</option>
+                        {% endfor %}
+                      </select>
+                    </label>
+                    <label>Sheet (optional)
+                      <input name="sheet" value="{{ r.sheet }}" placeholder="any sheet">
+                    </label>
+                    <label>Has all of these columns
+                      <input name="header_contains" value="{{ r.header_contains | join(', ') }}"
+                             placeholder="MEM_NO, ADOPTED">
+                    </label>
+                    <label>Has one of these columns
+                      <input name="header_contains_any" value="{{ r.header_contains_any | join(', ') }}"
+                             placeholder="ADOPTED, WEIGHTED">
+                    </label>
+                    <label>Column
+                      <input name="row_column" value="{{ r.row_column }}" placeholder="MEM_NO">
+                    </label>
+                    <label>Value
+                      <input name="row_value" value="{{ r.row_value }}" placeholder="Subject">
+                    </label>
+                  </div>
+                  <button class="gen-btn" type="submit">Save this rule</button>
+                </form>
+              </details>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </section>
+
+    {% if columns %}
+    <section class="card">
+      <h2>Columns in your workbooks</h2>
+      <p class="muted">
+        The exact spellings the app can see, so a rule can be written
+        against what is really there. A rule that names a column
+        wrongly matches nothing, and that is hard to spot.
+      </p>
+      <p class="muted small column-ref">
+        {% for c in columns[:120] %}<code>{{ c }}</code>{% endfor %}
+      </p>
+    </section>
+    {% endif %}
+
+    <section class="card">
+      <h2>Add a rule</h2>
+      <form method="post" action="/intake/rules" class="rule-form">
+        <input type="hidden" name="action" value="add">
+        <div class="rule-form-grid">
+          <label>Name
+            <input name="label" required placeholder="Adopted comparables, with adjustments">
+          </label>
+          <label>Kind
+            <select name="kind">
+              {% for k in kinds %}
+              <option value="{{ k.id }}">{{ k.label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>Sheet (optional)
+            <input name="sheet" placeholder="any sheet">
+          </label>
+          <label>Has all of these columns
+            <input name="header_contains" placeholder="MEM_NO, ADOPTED">
+          </label>
+          <label>Has one of these columns
+            <input name="header_contains_any" placeholder="ADOPTED, WEIGHTED">
+          </label>
+          <label>Column
+            <input name="row_column" placeholder="MEM_NO">
+          </label>
+          <label>Value
+            <input name="row_value" placeholder="Subject">
+          </label>
+        </div>
+        <button class="gen-btn" type="submit">Add this rule</button>
+      </form>
+    </section>
+
+    {% if candidates %}
+    <section class="card">
+      <h2>Try it on a file</h2>
+      <p class="muted">
+        Pick a workbook to see how the app is reading it right now. If a
+        block is drawn in the wrong colour, that is the rule that needs
+        changing.
+      </p>
+      <p>
+        <a class="gen-btn" href="/intake">Open the content page</a>
+      </p>
+      <ul class="muted small">
+        {% for c in candidates[:12] %}
+        <li><code>{{ c.name }}</code></li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+
+    {% endif %}
+  </main>
+</body>
+</html>
