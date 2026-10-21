@@ -497,6 +497,62 @@ async def brochure_create(request: Request):
     return RedirectResponse(f"/brochure/{dev.id}", status_code=303)
 
 
+@app.get("/brochure/{dev_id}/edit", response_class=HTMLResponse)
+def brochure_edit(request: Request, dev_id: str) -> HTMLResponse:
+    """Correct a development's details.
+
+    Details go wrong — a district typed from memory, a developer
+    mis-remembered — and there has to be a way to fix one without
+    editing the data file by hand.
+    """
+    from demo import brochure as B
+    devs = B.load_developments()
+    dev = next((d for d in devs if d.id == dev_id), None)
+    if dev is None:
+        raise HTTPException(status_code=404, detail="no such development")
+    return templates.TemplateResponse(
+        request,
+        "brochure_new.html",
+        {
+            "auth": _auth_state(),
+            "today": date.today(),
+            "dev": dev.to_dict(),
+            "editing": True,
+        },
+    )
+
+
+@app.post("/brochure/{dev_id}/edit")
+async def brochure_update(request: Request, dev_id: str):
+    """Save the corrected details. The rounds are left alone."""
+    from demo import brochure as B
+
+    form = await request.form()
+    devs = B.load_developments()
+    dev = next((d for d in devs if d.id == dev_id), None)
+    if dev is None:
+        raise HTTPException(status_code=404, detail="no such development")
+
+    new_name = str(form.get("name") or "").strip()
+    if not new_name:
+        return RedirectResponse(
+            f"/brochure/{dev_id}/edit?error=Give the development a name.",
+            status_code=303)
+    dev.name = new_name
+    dev.dev_id = str(form.get("dev_id") or "").strip()
+    dev.address = str(form.get("address") or "").strip()
+    dev.district = str(form.get("district") or "").strip()
+    dev.client = str(form.get("client") or "").strip()
+    dev.business_line = str(form.get("business_line") or "").strip()
+
+    ok, detail = B.save_developments(devs)
+    if not ok:
+        return RedirectResponse(
+            f"/brochure/{dev_id}/edit?error=Could+not+save%3A+{detail}",
+            status_code=303)
+    return RedirectResponse(f"/brochure/{dev_id}?saved=Details+updated", status_code=303)
+
+
 @app.get("/brochure/{dev_id}", response_class=HTMLResponse)
 def brochure_development(request: Request, dev_id: str) -> HTMLResponse:
     """One development: its rounds, and the round's stages as sub-tabs."""

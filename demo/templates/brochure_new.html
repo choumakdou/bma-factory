@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Add a development · Sales Brochure Review · BMA Factory</title>
+  <title>{% if editing %}Edit{% else %}Add{% endif %} a development · Sales Brochure Review · BMA Factory</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -12,9 +12,9 @@
       <div class="case-ref-row">
         <a class="case-back" href="/brochure">← Sales Brochure Review</a>
         <span class="case-ref-sep">·</span>
-        <span class="case-ref">Add a development</span>
+        <span class="case-ref">{% if editing %}Edit the details{% else %}Add a development{% endif %}</span>
       </div>
-      <h1>Add a development</h1>
+      <h1>{% if editing %}Edit the details{% else %}Add a development{% endif %}</h1>
       <div class="case-addr">One development, reviewed every three months</div>
     </div>
   </header>
@@ -28,25 +28,27 @@
 
     <section class="card">
       <h2>The development</h2>
-      <form method="post" action="/brochure/new" class="rule-form">
+      <form method="post" action="{% if editing %}/brochure/{{ dev.id }}/edit{% else %}/brochure/new{% endif %}" class="rule-form">
         <div class="rule-form-grid">
           <label>Name
-            <input name="name" required placeholder="La Aldea">
+            <input name="name" required value="{{ dev.name if editing else '' }}" placeholder="La Aldea">
           </label>
           <label>Business line
-            <input name="business_line" placeholder="the line this sits under">
+            <input name="business_line" value="{{ dev.business_line if editing else '' }}"
+                   placeholder="the line this sits under">
           </label>
           <label>SRPE development id
-            <input name="dev_id" required placeholder="7825">
+            <input name="dev_id" required value="{{ dev.dev_id if editing else '' }}" placeholder="7825">
           </label>
           <label>Address
-            <input name="address" placeholder="1 La Aldea, Siu Lek Yuen">
+            <input name="address" value="{{ dev.address if editing else '' }}"
+                   placeholder="8 Ping Pak Lane, Ping Shan, Yuen Long">
           </label>
           <label>District
-            <input name="district" placeholder="Shatin">
+            <input name="district" value="{{ dev.district if editing else '' }}" placeholder="Ping Shan">
           </label>
           <label>Client
-            <input name="client" placeholder="the developer">
+            <input name="client" value="{{ dev.client if editing else '' }}" placeholder="the developer">
           </label>
         </div>
         <p class="muted small">
@@ -56,7 +58,12 @@
           points you straight at the right page and the deadline chain
           starts from the real upload date.
         </p>
+        {% if editing %}
+        <button class="gen-btn" type="submit">Save the details</button>
+        <a class="dl-link" href="/brochure/{{ dev.id }}">Cancel</a>
+        {% else %}
         <button class="gen-btn" type="submit">Add it and open the first round</button>
+        {% endif %}
       </form>
     </section>
   </main>

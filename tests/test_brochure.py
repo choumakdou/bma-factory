@@ -397,3 +397,38 @@ class TestEvidence(unittest.TestCase):
     def test_the_location_plan_instruction_mentions_sorting_by_date(self):
         lp = next(i for i in CHECK_ITEMS if i.id == "location_plan")
         self.assertIn("By Date", " ".join(lp.how_to_check))
+
+
+class TestEditingTheDetails(unittest.TestCase):
+    """A development's details go wrong; they have to be fixable."""
+
+    def _dev(self):
+        return Development(id="la-aldea", name="La Aldea", dev_id="7825",
+                           address="8 Ping Pak Lane, Ping Shan, Yuen Long",
+                           district="Ping Shan", client="Winful Far East",
+                           business_line="")
+
+    def test_the_details_survive_a_round_trip(self):
+        d = self._dev()
+        back = Development.from_dict(d.to_dict())
+        self.assertEqual(back.address, "8 Ping Pak Lane, Ping Shan, Yuen Long")
+        self.assertEqual(back.district, "Ping Shan")
+        self.assertEqual(back.client, "Winful Far East")
+
+    def test_the_edit_route_leaves_the_rounds_alone(self):
+        """Correcting a district must not disturb the review history."""
+        d = self._dev()
+        r = d.open_round(date(2026, 8, 1))
+        r.last_actual = "2026-08-07"
+        r.items["ozp"] = {"brochure_version": "2021-08-20", "evidence": [
+            {"ref": "S/HSK/4", "date": "2026-10-09"}]}
+        d.district = "Wrong District"
+        back = Development.from_dict(d.to_dict())
+        self.assertEqual(back.district, "Wrong District")
+        self.assertEqual(back.rounds[0].last_actual, "2026-08-07")
+        self.assertEqual(back.rounds[0].items["ozp"]["evidence"][0]["ref"], "S/HSK/4")
+
+    def test_a_development_with_no_business_line_groups_as_unassigned(self):
+        from demo.brochure import by_business_line
+        groups = by_business_line([self._dev()])
+        self.assertEqual(groups[0][0], "Unassigned")
