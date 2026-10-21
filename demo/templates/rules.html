@@ -228,16 +228,15 @@
     <section class="card">
       <h2>Try it on a file</h2>
       <p class="muted">
-        Pick a workbook to see how the app is reading it right now. If a
-        block is drawn in the wrong colour, that is the rule that needs
-        changing.
-      </p>
-      <p>
-        <a class="gen-btn" href="/intake">Open the content page</a>
+        Open a workbook and look at <b>How this file is arranged</b> at
+        the top of the page. Each block is drawn in the colour of its
+        kind, and says whether it was read by your rules or by the
+        built-in detection. If a block is drawn in the wrong colour,
+        that is the rule that needs changing.
       </p>
       <ul class="muted small">
         {% for c in candidates[:12] %}
-        <li><code>{{ c.name }}</code></li>
+        <li><a href="/content/{{ c.id }}"><code>{{ c.name }}</code></a></li>
         {% endfor %}
       </ul>
     </section>
