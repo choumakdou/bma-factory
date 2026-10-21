@@ -23,6 +23,7 @@ subject row, so it becomes a project without being re-keyed.
 from __future__ import annotations
 
 import io
+import json
 import sys
 import logging
 import re
@@ -310,6 +311,116 @@ def _intake_rows(
         })
         rows.append(d)
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Map — every project, on OpenStreetMap
+# ---------------------------------------------------------------------------
+
+@app.get("/map", response_class=HTMLResponse)
+def map_page(request: Request) -> HTMLResponse:
+    """All projects under both tabs, on an open-source map.
+
+    Leaflet on OpenStreetMap tiles: no API key, no billing, nothing
+    that expires. Rendering never calls the geocoder — a pin appears
+    when its coordinates are already on file, and Bobby asks for the
+    rest one at a time.
+    """
+    from demo import geo
+    from demo import mappins
+
+    groups = mappins.collect()
+    stats = mappins.summary(groups)
+    return templates.TemplateResponse(
+        request,
+        "map.html",
+        {
+            "auth": _auth_state(),
+            "groups": groups,
+            "stats": stats,
+            "geo_status": geo.status(),
+            # Serialised here rather than in the template so the escaping
+            # happens exactly once, and so the page and /api/map can
+            # never drift apart.
+            "map_json": json.dumps({"groups": groups, "stats": stats}),
+            # Only located pins carry coordinates. A project with no
+            # address stays in the list, unplaced, rather than being
+            # dropped from the map.
+            "tabs": [
+                {"id": "pv", "label": "Property Valuation",
+                 "href": "/", "pins": groups.get("pv", [])},
+                {"id": "sbr", "label": "Sales Brochure Review",
+                 "href": "/brochure", "pins": groups.get("sbr", [])},
+            ],
+        },
+    )
+
+
+@app.get("/api/map", include_in_schema=False)
+def map_api() -> JSONResponse:
+    """The pin list as JSON — the same data the page draws."""
+    from demo import mappins
+    groups = mappins.collect()
+    return JSONResponse({
+        "groups": groups,
+        "summary": mappins.summary(groups),
+    })
+
+
+@app.post("/map/locate")
+async def map_locate(request: Request):
+    """Find one project on the map.
+
+    Separate from the page load on purpose: the public geocoder allows
+    one request a second, so geocoding fifty projects on page load
+    would make the console unusable and get the instance throttled.
+    Bobby asks for the ones he wants.
+    """
+    form = await request.form()
+    key = str(form.get("key") or "").strip()
+    address = str(form.get("address") or "").strip()
+    district = str(form.get("district") or "").strip()
+    name = str(form.get("name") or "").strip()
+    if not any([key, address, name]):
+        return RedirectResponse("/map?error=Nothing+to+look+up", status_code=303)
+
+    from demo import geo
+    got = geo.geocode(address, district, name)
+    if got:
+        return RedirectResponse(
+            f"/map?found={quote_plus(got[2][:120])}", status_code=303)
+    return RedirectResponse(
+        "/map?error="
+        + quote_plus("No match for that address — the public map does not "
+                     "have this building. Confirm it by hand instead."),
+        status_code=303)
+
+
+@app.post("/map/confirm")
+async def map_confirm(request: Request):
+    """The valuer has put the pin where it belongs."""
+    form = await request.form()
+    key = str(form.get("key") or "").strip()
+    try:
+        lat = float(form.get("lat"))
+        lon = float(form.get("lon"))
+    except (TypeError, ValueError):
+        return RedirectResponse(
+            "/map?error=" + quote_plus("No coordinates in that."),
+            status_code=303)
+    if not key:
+        return RedirectResponse(
+            "/map?error=" + quote_plus("No project to attach it to."),
+            status_code=303)
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return RedirectResponse(
+            "/map?error=" + quote_plus("Those coordinates are not on Earth."),
+            status_code=303)
+
+    from demo import geo
+    geo.confirm(key, lat, lon, note=str(form.get("note") or ""))
+    return RedirectResponse(
+        "/map?saved=" + quote_plus("Location confirmed"), status_code=303)
 
 
 @app.get("/intake", response_class=HTMLResponse)

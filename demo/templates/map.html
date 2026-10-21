@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Map · BMA Factory</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        crossorigin="">
+  <link rel="stylesheet" href="/static/map.css">
+</head>
+<body>
+  <header class="console-head">
+    <div class="console-head-left">
+      <div class="console-brand">
+        <span class="console-brand-mark">⚙</span>
+        <span class="console-brand-text">BMA Factory</span>
+        <span class="console-brand-tag">map</span>
+      </div>
+      <h1>Where the work is</h1>
+      <div class="console-sub">
+        Every project under both tabs, on OpenStreetMap. No API key,
+        nothing to expire.
+      </div>
+    </div>
+  </header>
+
+  {% include "_nav.html" %}
+
+  {% if request.query_params.get('error') %}
+  <div class="console-banner console-banner-warn">
+    <span>📍 {{ request.query_params.get('error') }}</span>
+  </div>
+  {% elif request.query_params.get('saved') %}
+  <div class="console-banner console-banner-ok">
+    <span>✓ {{ request.query_params.get('saved') }}</span>
+  </div>
+  {% elif request.query_params.get('found') %}
+  <div class="console-banner console-banner-ok">
+    <span>✓ Matched “{{ request.query_params.get('found') }}”. Check the
+      dashed pin looks right, then confirm it.</span>
+  </div>
+  {% endif %}
+
+  <main class="map-main">
+    <div class="map-grid">
+
+      <section class="map-panel">
+        <div class="map-tabs" role="tablist" aria-label="Module">
+          {% for t in tabs %}
+          <button class="map-tab {% if loop.first %}is-active{% endif %}"
+                  role="tab" data-tab="{{ t.id }}"
+                  aria-selected="{% if loop.first %}true{% else %}false{% endif %}">
+            <span class="map-tab-name">{{ t.label }}</span>
+            <span class="map-tab-count">{{ t['pins']|length }}</span>
+            <span class="map-tab-conf" title="confirmed locations">
+              {{ stats[t.id ~ '_confirmed'] }}●</span>
+          </button>
+          {% endfor %}
+        </div>
+
+        <div class="map-canvas-wrap">
+          <div id="map" class="map-canvas" aria-label="Map of projects"></div>
+          <div id="map-nodata" class="map-nodata" hidden>
+            <p><b>Nothing placed on the map yet.</b></p>
+            <p class="muted small">Use “Find on map” on a project in the
+              list. Each pin is a suggestion until you confirm it.</p>
+          </div>
+        </div>
+
+        <div class="map-legend">
+          <span class="lg"><i class="lg-pin lg-confirmed"></i> confirmed by you</span>
+          <span class="lg"><i class="lg-pin lg-geocoded"></i> suggested — check before you rely on it</span>
+          <span class="lg muted small">Tiles © OpenStreetMap contributors</span>
+        </div>
+      </section>
+
+      <aside class="map-side">
+        <div class="map-side-head">
+          <h2 id="map-side-title">Property Valuation</h2>
+          <span class="muted small" id="map-side-count"></span>
+        </div>
+
+        <p class="map-hint muted small">
+          A project is placed when we have its coordinates. “Find on map”
+          asks the public geocoder for that one address — one at a time,
+          because it allows one request a second. Nothing is placed until
+          a location is confirmed or a suggestion is shown as a dashed pin.
+        </p>
+
+        <div id="map-list" class="map-list"></div>
+
+        <details class="map-where">
+          <summary class="muted small">Where these coordinates are kept</summary>
+          <p class="muted small">
+            <code>{{ geo_status.object }}</code> in the app's own Cloud
+            Storage bucket — alongside the token, not in Drive, because a
+            confirmed location is a working note rather than a
+            deliverable.
+          </p>
+          <p class="muted small">
+            {{ geo_status.confirmed }} confirmed ·
+            {{ geo_status.geocoded }} suggested ·
+            {{ geo_status.known }} places on file
+          </p>
+        </details>
+      </aside>
+
+    </div>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  {# One tojson, not two. Jinja's tojson escapes < > & ' so a project
+     named "</script>" cannot break out of this tag. #}
+  <script id="map-pins" type="application/json">{{ map_json|safe }}</script>
+  <script src="/static/map.js"></script>
+</body>
+</html>

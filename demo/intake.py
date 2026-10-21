@@ -1029,6 +1029,39 @@ def project_from_sections(parsed: ParsedWorkbook) -> Optional[dict[str, Any]]:
     return parsed.project
 
 
+def list_projects(
+    folders: tuple[str, ...] = INTAKE_FOLDERS,
+    whole_drive: bool = False,
+) -> list[dict[str, Any]]:
+    """``{'file_id', 'name', 'project'}`` per workbook in the intake folders.
+
+    The one place that walks Drive → parse → project. The console, the
+    content page and the map all go through here, so a project can never
+    be derived two slightly different ways in two places.
+
+    A workbook that fails to parse is skipped, not fatal — one broken
+    file must not cost us every other project in Drive.
+    """
+    rows: list[dict[str, Any]] = []
+    try:
+        files = list_drive_workbooks(folders, whole_drive=whole_drive)
+    except Exception:  # noqa: BLE001
+        return rows
+    for f in files:
+        try:
+            parsed = parse_drive_file(f)
+        except Exception:  # noqa: BLE001
+            continue
+        rows.append({
+            "file_id": f.id,
+            "name": f.name,
+            "modified_time": f.modified_time,
+            "project": project_from_sections(parsed),
+            "format_id": parsed.format_id,
+        })
+    return rows
+
+
 def find_file(file_id: str, folders: tuple[str, ...] = INTAKE_FOLDERS) -> Optional[DriveFile]:
     for f in list_drive_workbooks(folders):
         if f.id == file_id:
