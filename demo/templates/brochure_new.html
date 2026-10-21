@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Add a development · Sales Brochure Review · BMA Factory</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="case-head">
+    <div class="case-head-left">
+      <div class="case-ref-row">
+        <a class="case-back" href="/brochure">← Sales Brochure Review</a>
+        <span class="case-ref-sep">·</span>
+        <span class="case-ref">Add a development</span>
+      </div>
+      <h1>Add a development</h1>
+      <div class="case-addr">One development, reviewed every three months</div>
+    </div>
+  </header>
+
+  <main class="case-main">
+    {% if request.query_params.get('error') %}
+    <section class="card" style="border-left:3px solid #c5221f">
+      <p style="margin:0"><b>{{ request.query_params.get('error') }}</b></p>
+    </section>
+    {% endif %}
+
+    <section class="card">
+      <h2>The development</h2>
+      <form method="post" action="/brochure/new" class="rule-form">
+        <div class="rule-form-grid">
+          <label>Name
+            <input name="name" required placeholder="La Aldea">
+          </label>
+          <label>Business line
+            <input name="business_line" placeholder="the line this sits under">
+          </label>
+          <label>SRPE development id
+            <input name="dev_id" required placeholder="7825">
+          </label>
+          <label>Address
+            <input name="address" placeholder="1 La Aldea, Siu Lek Yuen">
+          </label>
+          <label>District
+            <input name="district" placeholder="Shatin">
+          </label>
+          <label>Client
+            <input name="client" placeholder="the developer">
+          </label>
+        </div>
+        <p class="muted small">
+          The SRPE development id is the <code>devId</code> in the
+          platform's own link — for example
+          <code>selected_dev?devId=7825</code>. With it, the review
+          points you straight at the right page and the deadline chain
+          starts from the real upload date.
+        </p>
+        <button class="gen-btn" type="submit">Add it and open the first round</button>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

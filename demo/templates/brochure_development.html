@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ dev.name }} · Sales Brochure Review · BMA Factory</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="case-head">
+    <div class="case-head-left">
+      <div class="case-ref-row">
+        <a class="case-back" href="/brochure">← Sales Brochure Review</a>
+        <span class="case-ref-sep">·</span>
+        <span class="case-ref">{{ dev.business_line or 'Unassigned' }}</span>
+      </div>
+      <h1>{{ dev.name }}</h1>
+      <div class="case-meta">
+        {% if dev.address %}<span class="meta-pill">{{ dev.address }}</span>{% endif %}
+        {% if dev.district %}<span class="meta-pill">{{ dev.district }}</span>{% endif %}
+        {% if dev.client %}<span class="meta-pill">{{ dev.client }}</span>{% endif %}
+        {% if dev.dev_id %}<span class="meta-pill">SRPE devId {{ dev.dev_id }}</span>{% endif %}
+        <span class="meta-pill">Round {{ round.number }}</span>
+        {% if round.closed %}<span class="meta-pill">closed</span>{% endif %}
+      </div>
+    </div>
+    <div class="case-head-right">
+      <a class="dl-link" href="{{ srpe_link }}" target="_blank" rel="noopener">
+        Open on the SRPE platform →
+      </a>
+    </div>
+  </header>
+
+  <main class="case-main">
+    {% if request.query_params.get('saved') %}
+    <section class="card" style="border-left:3px solid #188038">
+      <p style="margin:0"><b>{{ request.query_params.get('saved') }}</b></p>
+    </section>
+    {% endif %}
+    {% if request.query_params.get('error') %}
+    <section class="card" style="border-left:3px solid #c5221f">
+      <p style="margin:0"><b>{{ request.query_params.get('error') }}</b></p>
+    </section>
+    {% endif %}
+
+    {# ---- the deadline, always visible ---- #}
+    <section class="card">
+      <div class="section-head">
+        <h2>The deadline</h2>
+        <div class="section-meta">
+          {% if summary.days_to_deadline is not none %}
+          <span class="meta-pill {% if summary.days_to_deadline < 0 %}pill-late{% elif summary.days_to_deadline <= 21 %}pill-soon{% endif %}">
+            {% if summary.days_to_deadline < 0 %}{{ -summary.days_to_deadline }} days late
+            {% elif summary.days_to_deadline == 0 %}due today
+            {% else %}{{ summary.days_to_deadline }} days to the deadline{% endif %}
+          </span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="deadline-strip">
+        <div class="deadline-cell">
+          <div class="deadline-label">Last round's actual upload</div>
+          <div class="deadline-value">{{ summary.last_actual or '—' }}</div>
+        </div>
+        <div class="deadline-arrow">+3 months →</div>
+        <div class="deadline-cell">
+          <div class="deadline-label">Upload deadline</div>
+          <div class="deadline-value">{{ summary.deadline or '—' }}</div>
+        </div>
+        <div class="deadline-arrow">preceding Friday →</div>
+        <div class="deadline-cell">
+          <div class="deadline-label">Target upload date</div>
+          <div class="deadline-value">{{ summary.target or '—' }}</div>
+        </div>
+        <div class="deadline-arrow">confirmed →</div>
+        <div class="deadline-cell">
+          <div class="deadline-label">Actual upload date</div>
+          <div class="deadline-value {% if not summary.actual %}muted{% endif %}">{{ summary.actual or 'to be confirmed' }}</div>
+        </div>
+      </div>
+    </section>
+
+    {# ---- the sub-tabs: one per stage ---- #}
+    <section class="card">
+      <div class="section-head">
+        <h2>Round {{ round.number }} — the checking</h2>
+        <div class="section-meta">
+          <span class="meta-pill">{{ summary['items_done'] }}/{{ summary['items_total'] }} items checked</span>
+          {% if summary['items_needing_update'] %}
+          <span class="meta-pill pill-late">{{ summary['items_needing_update'] }} to update</span>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="tabs" data-tabs>
+        <div class="tab-bar" role="tablist">
+          {% for s in stages %}
+            <button class="tab-btn" role="tab" id="tab-{{ s.stage.number }}"
+                    aria-controls="panel-{{ s.stage.number }}"
+                    aria-selected="{% if loop.first %}true{% else %}false{% endif %}">
+              <span class="tab-no">Stage {{ s.stage.number }}</span>
+              <span class="tab-name">{{ s.stage.name }}</span>
+              {% if s.stage.kind == 'items' %}
+                <span class="tab-count">{{ s.done }}/{{ s.total }}</span>
+                {% if s.needing %}<span class="tab-flag">{{ s.needing }}</span>{% endif %}
+              {% endif %}
+            </button>
+          {% endfor %}
+        </div>
+
+        {% for s in stages %}
+        <div class="tab-panel" role="tabpanel" id="panel-{{ s.stage.number }}"
+             aria-labelledby="tab-{{ s.stage.number }}" {% if not loop.first %}hidden{% endif %}>
+          <p class="muted small stage-desc">{{ s.stage.description }}</p>
+
+          {% if s.stage.kind == 'dates' %}
+          <form method="post" action="/brochure/{{ dev.id }}/round/{{ round.number }}">
+            <input type="hidden" name="action" value="stage0">
+            <table class="content-table stage0-table">
+              <thead>
+                <tr><th>Field</th><th>Value</th><th>Where it comes from</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><b>Last round's Actual Upload Date</b></td>
+                  <td>
+                    <input type="date" name="last_actual" value="{{ round.last_actual }}"
+                           class="date-input">
+                  </td>
+                  <td class="muted small">
+                    The actual upload date of the round before. Read from the
+                    platform, or confirmed by you.
+                    <div style="margin-top:.3rem">
+                      <a class="dl-link" href="{{ srpe_link }}" target="_blank" rel="noopener">
+                        Open the development on the SRPE platform →
+                      </a>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td><b>Upload Deadline</b></td>
+                  <td><span class="computed-value">{{ s.deadline or '—' }}</span></td>
+                  <td class="muted small">
+                    Calculated: the last round's actual upload date plus
+                    three calendar months. This is the statutory
+                    re-examination window under section 17(1).
+                  </td>
+                </tr>
+                <tr>
+                  <td><b>Target Upload Date</b></td>
+                  <td>
+                    <input type="date" name="target" value="{{ round.target or (round.default_target.isoformat() if round.default_target else '') }}"
+                           class="date-input">
+                  </td>
+                  <td class="muted small">
+                    The preceding Friday to the deadline
+                    {% if s.target %}— currently {{ s.target }}{% endif %}.
+                    <b>Agreed with the client</b>, so it is yours to change.
+                  </td>
+                </tr>
+                <tr>
+                  <td><b>Actual Upload Date</b></td>
+                  <td>
+                    <input type="date" name="actual" value="{{ round.actual }}"
+                           class="date-input">
+                  </td>
+                  <td class="muted small">
+                    To be confirmed. When it is filled in, it becomes the
+                    next round's last round's actual upload date.
+                  </td>
+                </tr>
+                <tr>
+                  <td><b>Note</b></td>
+                  <td colspan="2">
+                    <input type="text" name="stage0_note" value="{{ round.stage0_note }}"
+                           placeholder="Anything agreed with the client">
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <p><button class="gen-btn" type="submit">Save Stage 0</button></p>
+          </form>
+          {% else %}
+
+          {% for item in s['items'] %}
+          <div class="check-item verdict-{{ item.verdict }}">
+            <div class="check-head">
+              <h3>{{ item.name }}</h3>
+              <span class="verdict verdict-{{ item.verdict }}">{{ item.verdict_label }}</span>
+            </div>
+            <p class="muted small">{{ item.compares }}</p>
+            <form method="post" action="/brochure/{{ dev.id }}/round/{{ round.number }}">
+              <input type="hidden" name="action" value="item">
+              <input type="hidden" name="item_id" value="{{ item.id }}">
+              <table class="content-table stage0-table">
+                <tbody>
+                  <tr>
+                    <td><b>The version the brochure carries</b></td>
+                    <td><input type="date" name="brochure_version"
+                               value="{{ item.brochure_version }}" class="date-input"></td>
+                    <td class="muted small">
+                      The date on the plan, photograph or sheet inside the
+                      brochure you have.
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><b>The version at the source</b></td>
+                    <td><input type="date" name="source_version"
+                               value="{{ item.source_version }}" class="date-input"></td>
+                    <td class="muted small">
+                      What the source shows today.
+                      <div style="margin-top:.3rem">
+                        <a class="dl-link" href="{{ item.source }}" target="_blank" rel="noopener">
+                          {{ item.source_label }} →
+                        </a>
+                      </div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><b>Note</b></td>
+                    <td colspan="2">
+                      <input type="text" name="note" value="{{ item.note }}"
+                             placeholder="Plan reference, sheet number, what you saw">
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <p>
+                <button class="gen-btn" type="submit">Save this item</button>
+                <button class="gen-btn gen-btn-secondary" type="submit"
+                        name="action_flag" value="brochure_updated">
+                  The brochure has been updated
+                </button>
+                {% if item.checked_at %}
+                <span class="muted small">last checked {{ item.checked_at[:16] }}</span>
+                {% endif %}
+              </p>
+            </form>
+          </div>
+          {% endfor %}
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+
+    {# ---- the rounds ---- #}
+    <section class="card">
+      <div class="section-head">
+        <h2>The rounds</h2>
+        <div class="section-meta">
+          <form method="post" action="/brochure/{{ dev.id }}/round">
+            <button class="gen-btn" type="submit">Open the next round</button>
+          </form>
+        </div>
+      </div>
+      <p class="muted small">
+        Opening a round carries the last round's actual upload date and
+        the item versions forward. The new round's actual upload date
+        starts empty, and it is what the next round is worked out from.
+      </p>
+      <table class="content-table">
+        <thead>
+          <tr><th>Round</th><th>Opened</th><th>Last upload</th>
+              <th>Deadline</th><th>Target</th><th>Actual</th><th></th></tr>
+        </thead>
+        <tbody>
+        {% for r in rounds %}
+          <tr {% if r.number == round.number %}style="background:#f4f8fe"{% endif %}>
+            <td><b>Round {{ r.number }}</b>{% if r.closed %} <span class="meta-pill">closed</span>{% endif %}</td>
+            <td class="muted small">{{ r.opened }}</td>
+            <td class="muted small">{{ r.last_actual or '—' }}</td>
+            <td class="muted small">{{ r.deadline or '—' }}</td>
+            <td class="muted small">{{ r.target or '—' }}</td>
+            <td class="muted small">{{ r.actual or '—' }}</td>
+            <td>
+              <a class="dl-link" href="/brochure/{{ dev.id }}#stage-stage0">Open</a>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  </main>
+
+  <script>
+  (function () {
+    var root = document.querySelector('[data-tabs]');
+    if (!root) return;
+    var buttons = Array.prototype.slice.call(root.querySelectorAll('.tab-btn'));
+    var panels = Array.prototype.slice.call(root.querySelectorAll('.tab-panel'));
+
+    function show(index, push) {
+      buttons.forEach(function (b, i) {
+        var on = i === index;
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+        b.classList.toggle('is-active', on);
+      });
+      panels.forEach(function (p, i) {
+        p.hidden = i !== index;
+      });
+      if (push && history.replaceState) {
+        history.replaceState(null, '', '#stage-' + buttons[index].id.replace('tab-', ''));
+      }
+    }
+
+    buttons.forEach(function (b, i) {
+      b.addEventListener('click', function () { show(i, true); });
+    });
+
+    // A stage in the link opens that stage, and the browser's back
+    // button walks back through the stages.
+    function fromHash() {
+      var m = (location.hash || '').match(/^#stage-(\d+)/);
+      if (!m) return;
+      var want = 'panel-' + m[1];
+      var i = panels.findIndex(function (p) { return p.id === want; });
+      if (i >= 0) show(i, false);
+    }
+    window.addEventListener('hashchange', fromHash);
+    fromHash();
+  })();
+  </script>
+</body>
+</html>

@@ -40,7 +40,7 @@ FOLDER_MIME = "application/vnd.google-apps.folder"
 DRIVE_ROOT_PATH = os.environ.get("VF_DRIVE_ROOT_PATH", "bma-factory/Valuation")
 
 #: The folders the app owns, relative to ``DRIVE_ROOT_PATH``.
-APP_FOLDERS = ("ORO", "Outputs", "Intake", "Templates")
+APP_FOLDERS = ("ORO", "Outputs", "Intake", "Templates", "SalesBrochure")
 
 # Folder cache — first lookup hits the API, subsequent ones don't.
 _lock = threading.Lock()

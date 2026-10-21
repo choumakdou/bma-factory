@@ -26,6 +26,7 @@ import io
 import sys
 import logging
 import traceback
+from datetime import date, datetime
 from urllib.parse import quote_plus
 from pathlib import Path
 from typing import Any
@@ -416,6 +417,254 @@ def drive_organise() -> JSONResponse:
 # ---------------------------------------------------------------------------
 # Section rules — the valuer's own arrangement templates
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Sales Brochure Review — the quarterly re-examination routine
+# ---------------------------------------------------------------------------
+
+@app.get("/brochure", response_class=HTMLResponse)
+def brochure_index(request: Request) -> HTMLResponse:
+    """The developments under review, grouped by business line."""
+    from demo import brochure as B
+    from demo.sources import check_all
+
+    auth = _auth_state()
+    devs = B.load_developments()
+    today = date.today()
+    groups = []
+    for line, members in B.by_business_line(devs):
+        groups.append({
+            "line": line,
+            "items": [B.summarise(d, today) for d in members],
+        })
+    return templates.TemplateResponse(
+        request,
+        "brochure.html",
+        {
+            "auth": auth,
+            "groups": groups,
+            "total": len(devs),
+            "sources": check_all(devs[0]) if devs else {},
+        },
+    )
+
+
+@app.get("/brochure/new", response_class=HTMLResponse)
+def brochure_new(request: Request) -> HTMLResponse:
+    """The form for adding a development."""
+    from demo import brochure as B
+    return templates.TemplateResponse(
+        request,
+        "brochure_new.html",
+        {"auth": _auth_state(), "today": date.today()},
+    )
+
+
+@app.post("/brochure/new")
+async def brochure_create(request: Request):
+    """Add a development and open its first round."""
+    from demo import brochure as B
+
+    form = await request.form()
+    name = str(form.get("name") or "").strip()
+    if not name:
+        return RedirectResponse("/brochure/new?error=Give the development a name.",
+                                status_code=303)
+
+    devs = B.load_developments()
+    dev = B.Development(
+        id=B.slugify(name),
+        name=name,
+        dev_id=str(form.get("dev_id") or "").strip(),
+        address=str(form.get("address") or "").strip(),
+        district=str(form.get("district") or "").strip(),
+        client=str(form.get("client") or "").strip(),
+        business_line=str(form.get("business_line") or "").strip(),
+    )
+    # A development id is the only way into the platform, and without
+    # it the whole deadline chain is unreachable.
+    if not dev.dev_id:
+        return RedirectResponse(
+            "/brochure/new?error=The+SRPE+development+id+is+needed+—+it+is+the+"
+            "devId+in+the+platform's+link.",
+            status_code=303)
+    dev.open_round(date.today())
+    devs = [d for d in devs if d.id != dev.id] + [dev]
+    ok, detail = B.save_developments(devs)
+    if not ok:
+        return RedirectResponse(f"/brochure/new?error=Could+not+save%3A+{detail}",
+                                status_code=303)
+    return RedirectResponse(f"/brochure/{dev.id}", status_code=303)
+
+
+@app.get("/brochure/{dev_id}", response_class=HTMLResponse)
+def brochure_development(request: Request, dev_id: str) -> HTMLResponse:
+    """One development: its rounds, and the round's stages as sub-tabs."""
+    from demo import brochure as B
+    from demo.sources import check_all
+
+    auth = _auth_state()
+    devs = B.load_developments()
+    dev = next((d for d in devs if d.id == dev_id), None)
+    if dev is None:
+        raise HTTPException(status_code=404, detail="no such development")
+
+    today = date.today()
+    rnd = dev.current_round
+    if rnd is None:
+        rnd = dev.open_round(today)
+
+    items = [rnd.item_state(i) for i in B.CHECK_ITEMS]
+    stages = []
+    for stage in B.STAGES:
+        if stage.kind == "items":
+            stages.append({
+                "stage": stage,
+                "items": items,
+                "done": sum(1 for i in items if i["verdict"] != "unchecked"),
+                "total": len(items),
+                "needing": sum(1 for i in items if i["verdict"] == "update"),
+            })
+        else:
+            stages.append({
+                "stage": stage,
+                "deadline": B.fmt_date(rnd.deadline),
+                "target": B.fmt_date(rnd.target_date),
+                "last_actual": B.fmt_date(rnd.last_actual_date),
+                "actual": B.fmt_date(rnd.actual_date),
+                "days_to_deadline": rnd.days_to_deadline(today),
+                "note": rnd.stage0_note,
+            })
+
+    return templates.TemplateResponse(
+        request,
+        "brochure_development.html",
+        {
+            "auth": auth,
+            "dev": dev.to_dict(),
+            "summary": B.summarise(dev, today),
+            "rounds": [
+                {
+                    "number": r.number,
+                    "opened": r.opened,
+                    "closed": r.closed,
+                    "last_actual": B.fmt_date(B.parse_date(r.last_actual)),
+                    "actual": B.fmt_date(B.parse_date(r.actual)),
+                    "deadline": B.fmt_date(r.deadline),
+                    "target": B.fmt_date(r.target_date),
+                }
+                for r in sorted(dev.rounds, key=lambda x: -x.number)
+            ],
+            "round": rnd,
+            "stages": stages,
+            "sources": check_all(dev),
+            "today": date.today(),
+            "srpe_link": _srpe_link(dev.dev_id),
+        },
+    )
+
+
+def _srpe_link(dev_id: str) -> str:
+    from demo.sources import srpe_development_link
+    return srpe_development_link(dev_id)
+
+
+@app.post("/brochure/{dev_id}/round")
+async def brochure_open_round(request: Request, dev_id: str):
+    """Open the next round, carrying the dates and the versions forward."""
+    from demo import brochure as B
+
+    devs = B.load_developments()
+    dev = next((d for d in devs if d.id == dev_id), None)
+    if dev is None:
+        raise HTTPException(status_code=404, detail="no such development")
+    dev.open_round(date.today())
+    ok, detail = B.save_developments(devs)
+    if not ok:
+        return RedirectResponse(f"/brochure/{dev_id}?error=Could+not+save%3A+{detail}",
+                                status_code=303)
+    return RedirectResponse(f"/brochure/{dev_id}", status_code=303)
+
+
+@app.post("/brochure/{dev_id}/round/{number}")
+async def brochure_save_round(request: Request, dev_id: str, number: int):
+    """Save a round — the deadline fields, an item, a note, or a close."""
+    from demo import brochure as B
+
+    form = await request.form()
+    action = str(form.get("action") or "stage0")
+
+    devs = B.load_developments()
+    dev = next((d for d in devs if d.id == dev_id), None)
+    if dev is None:
+        raise HTTPException(status_code=404, detail="no such development")
+    rnd = dev.round(number)
+    if rnd is None:
+        raise HTTPException(status_code=404, detail="no such round")
+
+    message = "Saved."
+
+    if action == "stage0":
+        rnd.last_actual = str(form.get("last_actual") or "").strip()
+        rnd.target = str(form.get("target") or "").strip()
+        rnd.actual = str(form.get("actual") or "").strip()
+        rnd.stage0_note = str(form.get("stage0_note") or "").strip()
+        if rnd.actual and not rnd.closed:
+            rnd.closed = True
+            message = "Saved, and the round is closed — the actual upload date "\
+                      "becomes the next round's starting point."
+
+    elif action == "item":
+        item_id = str(form.get("item_id") or "")
+        if item_id not in {i.id for i in B.CHECK_ITEMS}:
+            raise HTTPException(status_code=400, detail="unknown item")
+        state = dict(rnd.items.get(item_id) or {})
+        state["brochure_version"] = str(form.get("brochure_version") or "").strip()
+        state["source_version"] = str(form.get("source_version") or "").strip()
+        state["note"] = str(form.get("note") or "").strip()
+        state["checked_at"] = datetime.now().isoformat(timespec="seconds")
+        state["checked_by"] = str(form.get("checked_by") or "").strip()
+        if str(form.get("action_flag") or "") == "brochure_updated":
+            # The brochure has been re-issued with the new version, so
+            # that is what it now carries.
+            if state["source_version"]:
+                state["brochure_version"] = state["source_version"]
+                message = "Recorded — the brochure now carries the new version."
+        rnd.items[item_id] = state
+
+    elif action == "note":
+        rnd.notes[str(form.get("stage") or "")] = str(form.get("note") or "").strip()
+
+    elif action == "close":
+        rnd.closed = not rnd.closed
+        message = "Round closed." if rnd.closed else "Round reopened."
+
+    ok, detail = B.save_developments(devs)
+    if not ok:
+        return RedirectResponse(
+            f"/brochure/{dev_id}?error=Could+not+save%3A+{detail}", status_code=303)
+    return RedirectResponse(
+        f"/brochure/{dev_id}?saved={quote_plus(message)}#stage-{action}", status_code=303)
+
+
+@app.get("/api/brochure", include_in_schema=False)
+def brochure_api() -> JSONResponse:
+    """The reviews as JSON."""
+    from demo import brochure as B
+    today = date.today()
+    devs = B.load_developments()
+    return JSONResponse({
+        "developments": [B.summarise(d, today) for d in devs],
+        "stages": [
+            {"number": s.number, "name": s.name, "kind": s.kind}
+            for s in B.STAGES
+        ],
+        "items": [
+            {"id": i.id, "name": i.name, "source": i.source}
+            for i in B.CHECK_ITEMS
+        ],
+    })
+
 
 @app.get("/intake/rules", response_class=HTMLResponse)
 def rules_page(request: Request) -> HTMLResponse:

@@ -235,7 +235,14 @@ class DriveLayoutTests(unittest.TestCase):
     def test_organise_reports_a_missing_folder(self):
         self.fake.add("Intake")
         report = D.organise_drive()
-        self.assertEqual(sorted(report["missing"]), ["ORO", "Outputs", "Templates"])
+        # every folder the app owns, except the one that is there
+        self.assertEqual(sorted(report["missing"]),
+                         ["ORO", "Outputs", "SalesBrochure", "Templates"])
+
+    def test_the_sales_brochure_folder_is_one_of_the_apps_own(self):
+        """The Sales Brochure Review keeps its data in its own folder,
+        so it has to be tidied up with the rest."""
+        self.assertIn("SalesBrochure", D.APP_FOLDERS)
 
     def test_a_folder_at_my_drive_root_is_recognised(self):
         """Drive reports the root as a real id in `parents` on this account,

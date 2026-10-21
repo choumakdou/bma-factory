@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sales Brochure Review · BMA Factory</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="case-head">
+    <div class="case-head-left">
+      <div class="case-ref-row">
+        <a class="case-back" href="/">← Console</a>
+        <span class="case-ref-sep">·</span>
+        <span class="case-ref">Sales Brochure Review</span>
+      </div>
+      <h1>Sales Brochure Review</h1>
+      <div class="case-addr">
+        Every development, re-examined every three months under section 17(1)
+        of the Residential Properties (First-hand Sales) Ordinance
+      </div>
+    </div>
+    <div class="case-head-right">
+      <a class="gen-btn" href="/brochure/new">Add a development</a>
+    </div>
+  </header>
+
+  <main class="case-main">
+    {% if not auth.signed_in %}
+    <section class="card">
+      <h2>Sign in first</h2>
+      <p class="muted">
+        The reviews live in your own Drive, in
+        <code>/bma-factory/Valuation/SalesBrochure/developments.json</code>,
+        so they travel with your files.
+      </p>
+      <a class="gen-btn" href="/auth/login">Sign in with Google</a>
+    </section>
+    {% else %}
+
+    {% if not total %}
+    <section class="card">
+      <h2>No developments yet</h2>
+      <p class="muted">
+        Add the developments under review. Each one needs its
+        <b>SRPE development id</b> — the <code>devId</code> in the
+        platform's own link, for example
+        <code>selected_dev?devId=7825</code>. With it, the review can
+        point you straight at the right page on the platform.
+      </p>
+      <p><a class="gen-btn" href="/brochure/new">Add a development</a></p>
+    </section>
+    {% else %}
+
+    {% for g in groups %}
+    <section class="card">
+      <div class="section-head">
+        <h2>{{ g.line }}</h2>
+        <div class="section-meta">
+          <span class="meta-pill">{{ g['items']|length }} development{{ '' if g['items']|length == 1 else 's' }}</span>
+        </div>
+      </div>
+      <table class="content-table">
+        <thead>
+          <tr>
+            <th>Development</th><th>District</th><th>Round</th>
+            <th>Last upload</th><th>Deadline</th><th>Target</th>
+            <th>Items checked</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for d in g['items'] %}
+          <tr>
+            <td>
+              <a href="/brochure/{{ d.id }}"><b>{{ d.name }}</b></a>
+              {% if d.client %}<div class="muted small">{{ d.client }}</div>{% endif %}
+            </td>
+            <td class="muted small">{{ d.district or '—' }}</td>
+            <td class="muted small">
+              {% if d.round_number %}Round {{ d.round_number }}{% if d.closed %} · closed{% endif %}
+              {% else %}—{% endif %}
+            </td>
+            <td class="muted small">{{ d.last_actual or '—' }}</td>
+            <td>
+              {% if d.deadline %}
+                <b>{{ d.deadline }}</b>
+                {% if d.days_to_deadline is not none %}
+                  <span class="meta-pill {% if d.days_to_deadline < 0 %}pill-late{% elif d.days_to_deadline <= 21 %}pill-soon{% endif %}">
+                    {% if d.days_to_deadline < 0 %}{{ -d.days_to_deadline }} days late
+                    {% elif d.days_to_deadline == 0 %}today
+                    {% else %}in {{ d.days_to_deadline }} days{% endif %}
+                  </span>
+                {% endif %}
+              {% else %}—{% endif %}
+            </td>
+            <td class="muted small">{{ d.target or '—' }}</td>
+            <td class="muted small">
+              {{ d['items_done'] }}/{{ d['items_total'] }}
+              {% if d['items_needing_update'] %}
+              <span class="meta-pill pill-late">{{ d['items_needing_update'] }} to update</span>
+              {% endif %}
+            </td>
+            <td><a class="dl-link" href="/brochure/{{ d.id }}">Open →</a></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </section>
+    {% endfor %}
+
+    <section class="card">
+      <h2>Where the checks are made</h2>
+      <p class="muted">
+        Three sources. The app deep-links into each one so a check is a
+        click rather than a search, and it reads what it can — where a
+        site publishes a machine-readable version.
+      </p>
+      <table class="content-table">
+        <thead><tr><th>Source</th><th>What is checked</th><th>Read by the app</th></tr></thead>
+        <tbody>
+        {% for key, s in sources.items() %}
+          <tr>
+            <td><a href="{{ s.link }}" target="_blank" rel="noopener">{{ s.label }}</a></td>
+            <td class="muted small">{{ s.note }}</td>
+            <td class="muted small">
+              {% if s.get('ok') %}yes{% else %}no — you confirm the value{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </section>
+    {% endif %}
+    {% endif %}
+  </main>
+</body>
+</html>

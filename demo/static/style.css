@@ -689,3 +689,149 @@ body.console {
   font-size: .72rem;
   color: #3c4043;
 }
+
+/* --- Sales Brochure Review ---------------------------------------------- */
+
+.deadline-strip {
+  display: flex;
+  align-items: stretch;
+  gap: .4rem;
+  flex-wrap: wrap;
+}
+.deadline-cell {
+  flex: 1 1 150px;
+  padding: .6rem .75rem;
+  background: #f8f9fa;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+.deadline-label {
+  font-size: .7rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--ink-2);
+  margin-bottom: .2rem;
+}
+.deadline-value { font-size: 1.05rem; font-weight: 700; }
+.deadline-arrow {
+  align-self: center;
+  color: #9aa0a6;
+  font-size: .78rem;
+  white-space: nowrap;
+}
+.computed-value { font-weight: 700; }
+
+.pill-late   { background: #fce8e6; color: #c5221f; }
+.pill-soon   { background: #fef7e0; color: #b06000; }
+
+/* --- the sub-tabs ------------------------------------------------------- */
+
+.tabs { margin-top: .4rem; }
+.tab-bar {
+  display: flex;
+  gap: .3rem;
+  flex-wrap: wrap;
+  border-bottom: 2px solid var(--line);
+  margin-bottom: 1rem;
+}
+.tab-btn {
+  display: flex;
+  align-items: baseline;
+  gap: .45rem;
+  padding: .55rem .85rem;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  color: var(--ink-2);
+  margin-bottom: -2px;
+  border-bottom: 2px solid transparent;
+}
+.tab-btn:hover { background: #f8f9fa; color: var(--ink); }
+.tab-btn.is-active {
+  background: #fff;
+  border-color: var(--line);
+  border-bottom: 2px solid #1a73e8;
+  color: var(--ink);
+  font-weight: 600;
+}
+.tab-no {
+  font-size: .68rem;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: #1a73e8;
+  font-weight: 700;
+}
+.tab-name { font-size: .88rem; }
+.tab-count {
+  font-size: .7rem;
+  background: #f1f3f4;
+  color: var(--ink-2);
+  border-radius: 10px;
+  padding: .05rem .4rem;
+}
+.tab-flag {
+  font-size: .7rem;
+  background: #fce8e6;
+  color: #c5221f;
+  border-radius: 10px;
+  padding: .05rem .4rem;
+  font-weight: 700;
+}
+
+/* --- the checked items -------------------------------------------------- */
+
+.check-item {
+  border: 1px solid var(--line);
+  border-left: 3px solid #9aa0a6;
+  border-radius: 5px;
+  padding: .8rem .95rem;
+  margin-bottom: .9rem;
+}
+.check-item.verdict-ok      { border-left-color: #188038; }
+.check-item.verdict-update  { border-left-color: #c5221f; background: #fef7f6; }
+.check-item.verdict-unknown { border-left-color: #b06000; }
+.check-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .6rem;
+  flex-wrap: wrap;
+  margin-bottom: .25rem;
+}
+.check-head h3 { margin: 0; font-size: .95rem; }
+.verdict {
+  font-size: .72rem;
+  font-weight: 700;
+  padding: .15rem .5rem;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.verdict-unchecked { background: #f1f3f4; color: #5f6368; }
+.verdict-ok        { background: #e6f4ea; color: #137333; }
+.verdict-update    { background: #fce8e6; color: #c5221f; }
+.verdict-unknown   { background: #fef7e0; color: #b06000; }
+
+.stage0-table td { vertical-align: top; }
+.stage0-table input[type="text"],
+.stage0-table input[type="date"] {
+  width: 100%;
+  max-width: 220px;
+  padding: .35rem .45rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font: inherit;
+  font-size: .85rem;
+}
+.stage0-table input:focus {
+  outline: 2px solid #1a73e8;
+  outline-offset: -1px;
+}
+.gen-btn-secondary {
+  background: #fff;
+  color: #1a73e8;
+  border: 1px solid #1a73e8;
+}
+.stage-desc { margin: 0 0 .9rem; }
