@@ -77,6 +77,12 @@
             </form>
           </div>
           <div id="map" class="map-canvas" aria-label="Map of projects"></div>
+          <div id="map-placing" class="map-placing" hidden>
+            <span><b>Click the map</b> to drop the pin where the project is.
+              <span id="map-placing-name" class="map-placing-name"></span>
+            </span>
+            <button type="button" class="map-viewbtn" data-place-cancel>Cancel</button>
+          </div>
           <div id="map-nodata" class="map-nodata" hidden>
             <p><b>No pins placed yet.</b></p>
             <p class="muted small" id="map-nodata-msg">Looking them up now.</p>

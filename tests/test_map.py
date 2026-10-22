@@ -830,5 +830,115 @@ class TestRuleChangesInvalidateOldAnswers(unittest.TestCase):
             geo._cache.clear()
 
 
+
+class TestPlacingAPinByHand(unittest.TestCase):
+    """The guarantee: any project can be located, in two clicks.
+
+    The geocoder only knows estates that are in OpenStreetMap. Most of
+    Hong Kong's smaller developments are not — Bel-Air M2 is not, and
+    with the relevance gate on, it gets no pin at all. That is the safe
+    answer and a useless one, so the valuer drops the pin themselves.
+    """
+
+    def test_every_project_offers_placing(self):
+        from pathlib import Path
+        js = (Path(__file__).resolve().parents[1] / "demo" / "static"
+              / "map.js").read_text()
+        self.assertIn("data-place=", js)
+
+    def test_placing_is_offered_even_for_a_confirmed_pin(self):
+        """Moving a pin that is in the wrong place is as necessary as
+        making one that does not exist."""
+        from pathlib import Path
+        js = (Path(__file__).resolve().parents[1] / "demo" / "static"
+              / "map.js").read_text()
+        self.assertIn("'Move pin'", js)
+
+    def test_a_click_while_placing_confirms_that_spot(self):
+        from pathlib import Path
+        js = (Path(__file__).resolve().parents[1] / "demo" / "static"
+              / "map.js").read_text()
+        self.assertIn("map.on('click'", js)
+        self.assertIn("action = '/map/confirm'", js)
+
+    def test_placing_can_be_cancelled(self):
+        from pathlib import Path
+        js = (Path(__file__).resolve().parents[1] / "demo" / "static"
+              / "map.js").read_text()
+        self.assertIn("data-place-cancel", js)
+
+    def test_the_clicking_cursor_and_banner_exist(self):
+        from pathlib import Path
+        css = (Path(__file__).resolve().parents[1] / "demo" / "static"
+               / "map.css").read_text()
+        self.assertIn("cursor: crosshair", css)
+        tpl = (Path(__file__).resolve().parents[1] / "demo" / "templates"
+               / "map.html").read_text()
+        self.assertIn("map-placing", tpl)
+
+    def test_a_hand_placed_pin_is_confirmed_not_suggested(self):
+        """Clicking the map is the valuer's judgement, so it is recorded
+        as confirmed and never re-looked-up."""
+        import demo.geo as geo
+        from unittest import mock
+        with geo._lock:
+            geo._cache.clear()
+        called = []
+        with mock.patch.object(geo, "geocode",
+                               side_effect=lambda *a, **k: called.append(1)):
+            geo.confirm("hand placed", 22.44, 114.01, note="placed by hand")
+        self.assertEqual(geo.coords("hand placed")[2], "confirmed")
+        geo.geocode("hand placed", "", "x")
+        self.assertEqual(called, [], "a hand-placed pin is never re-looked-up")
+        with geo._lock:
+            geo._cache.clear()
+
+    def test_a_hand_placed_pin_says_so(self):
+        from fastapi.testclient import TestClient
+        from demo.app import app
+        r = TestClient(app).post(
+            "/map/confirm",
+            data={"key": "k2", "lat": "22.4", "lon": "114.0",
+                  "note": "placed by hand on the map"},
+            follow_redirects=False)
+        self.assertEqual(r.status_code, 303)
+        self.assertIn("by+hand", r.headers["location"])
+
+
+class TestBelAirIsNotGuessed(unittest.TestCase):
+    """The false negative we accepted, pinned down so it stays deliberate.
+
+    Bel-Air M2 is "Bel-Air M2 (Island Place Tower)". OSM does not name
+    Island Place Tower, so no result can be corroborated by name and the
+    app places nothing. That is the right trade — a missing pin is
+    recoverable, a wrong one is not — but it must not look like a
+    bug, and "Place on map" must be there.
+    """
+
+    def test_the_name_yields_a_real_token_to_check(self):
+        from demo.geo import _name_tokens
+        toks = _name_tokens("Bel-Air M2 (Island Place Tower)")
+        # "Island" and "Tower" are area/generic words, not identity
+        self.assertNotIn("island", toks)
+        self.assertNotIn("tower", toks)
+
+    def test_a_street_level_answer_is_not_taken_as_the_building(self):
+        """The answer for '510 King's Road' names King's Road and Hong
+        Kong Island — neither corroborates the estate."""
+        from demo.geo import _result_is_the_right_place
+        answer = ("King's Road, Tin Hau, Wan Chai District, "
+                  "Hong Kong Island, Hong Kong, China")
+        self.assertFalse(_result_is_the_right_place(answer,
+                                                    "Bel-Air M2 (Island Place Tower)"))
+
+    def test_the_place_button_is_there_for_it(self):
+        from pathlib import Path
+        js = (Path(__file__).resolve().parents[1] / "demo" / "static"
+              / "map.js").read_text()
+        # the hand-place action is unconditional
+        self.assertIn("Place on map", js)
+        self.assertIn("Move pin", js)
+
+
 if __name__ == "__main__":
     unittest.main()

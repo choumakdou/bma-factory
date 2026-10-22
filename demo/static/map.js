@@ -251,6 +251,12 @@
           '<input type="hidden" name="lon" value="' + esc(p.lon) + '">' +
           '<button type="submit" class="is-located">Confirm</button></form>';
       }
+      // Placing by hand is available for everything. It is the only
+      // way to locate an estate the public map has never heard of.
+      actions += '<button type="button" data-place="' + esc(p.key) +
+                 '" data-place-name="' + esc(p.name) + '">' +
+                 (p.how === 'confirmed' ? 'Move pin' : 'Place on map') +
+                 '</button>';
       if (p.how !== 'confirmed') {
         actions += '<form method="post" action="/map/locate" style="display:inline">' +
           '<input type="hidden" name="key" value="' + esc(p.key) + '">' +
@@ -274,10 +280,61 @@
     }).join('');
   }
 
+  // ---- placing a pin by hand -------------------------------------
+  // The geocoder only knows estates that are in OpenStreetMap. Most of
+  // Hong Kong's smaller developments are not, and an estate it has
+  // never heard of gets no pin at all — which is the safe answer but
+  // an unhelpful one. So the valuer can put the pin down himself:
+  // one button, then one click on the right spot.
+  var placing = null;
+
+  function beginPlace(key, name) {
+    placing = key;
+    map.getContainer().classList.add('is-placing');
+    var banner = document.getElementById('map-placing');
+    if (banner) {
+      banner.hidden = false;
+      var n = document.getElementById('map-placing-name');
+      if (n) n.textContent = name || '';
+    }
+  }
+
+  function endPlace() {
+    placing = null;
+    map.getContainer().classList.remove('is-placing');
+    var banner = document.getElementById('map-placing');
+    if (banner) banner.hidden = true;
+  }
+
+  map.on('click', function (e) {
+    if (!placing) return;
+    var key = placing, lat = e.latlng.lat, lon = e.latlng.lng;
+    endPlace();
+    var f = document.createElement('form');
+    f.method = 'post';
+    f.action = '/map/confirm';
+    f.innerHTML =
+      '<input name="key" value="' + esc(key) + '">' +
+      '<input name="lat" value="' + esc(lat.toFixed(6)) + '">' +
+      '<input name="lon" value="' + esc(lon.toFixed(6)) + '">' +
+      '<input name="note" value="placed by hand on the map">';
+    document.body.appendChild(f);
+    f.submit();
+  });
+
   // "Confirm this location" inside a popup, and the view buttons.
   document.addEventListener('click', function (ev) {
     var v = ev.target.closest ? ev.target.closest('[data-view]') : null;
     if (v && map) { fitView(v.getAttribute('data-view')); return; }
+
+    var pl = ev.target.closest ? ev.target.closest('[data-place]') : null;
+    if (pl) {
+      beginPlace(pl.getAttribute('data-place'),
+                 pl.getAttribute('data-place-name'));
+      return;
+    }
+    var cancel = ev.target.closest ? ev.target.closest('[data-place-cancel]') : null;
+    if (cancel) { endPlace(); return; }
 
     var b = ev.target.closest ? ev.target.closest('[data-confirm]') : null;
     if (b) {

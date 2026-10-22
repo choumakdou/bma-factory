@@ -495,9 +495,11 @@ async def map_confirm(request: Request):
             status_code=303)
 
     from demo import geo
-    geo.confirm(key, lat, lon, note=str(form.get("note") or ""))
+    note = str(form.get("note") or "").strip()
+    geo.confirm(key, lat, lon, note=note)
+    where = "by hand" if note.startswith("placed by hand") else "confirmed"
     return RedirectResponse(
-        "/map?saved=" + quote_plus("Location confirmed"), status_code=303)
+        f"/map?saved={quote_plus(f'Location {where}')}", status_code=303)
 
 
 @app.get("/intake", response_class=HTMLResponse)
