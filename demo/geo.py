@@ -51,6 +51,26 @@ _cache: dict[str, dict[str, Any]] = {}
 _loaded = False
 _last_call = 0.0
 
+#: Bumped when the rules for accepting a result change. A stored
+#: suggestion made under older rules is treated as absent, so a rule
+#: change cannot leave yesterday's wrong answer sitting on the map.
+#: CONFIRMED locations are never invalidated — the valuer's judgement
+#: outranks this version number.
+_GATE_VERSION = 2
+
+
+def _fresh(rec: dict[str, Any]) -> bool:
+    """Is this record still valid under the current rules?
+
+    A CONFIRMED location always is: the valuer put that pin there, and
+    no amount of rule-tuning puts it somewhere else.
+    """
+    if not rec:
+        return False
+    if rec.get("how") == "confirmed":
+        return True
+    return rec.get("gate", 0) >= _GATE_VERSION
+
 
 # ---------------------------------------------------------------------------
 # Storage
@@ -86,18 +106,27 @@ def _save() -> None:
 
 
 def lookup(key: str) -> dict[str, Any]:
-    """What we know about a location: confirmed, geocoded, or nothing."""
+    """What we know about a location: confirmed, geocoded, or nothing.
+
+    A record stored under older acceptance rules reads as nothing, so a
+    change to those rules cannot leave a stale suggestion on the map.
+    """
     if not key:
         return {}
     _load()
     with _lock:
-        return dict(_cache.get(_clean(key), {}))
+        rec = dict(_cache.get(_clean(key), {}))
+    return rec if _fresh(rec) else {}
 
 
 def remember(key: str, record: dict[str, Any]) -> None:
     _load()
+    record = dict(record)
+    record.setdefault("gate", _GATE_VERSION)
+    if record.get("how") != "confirmed":
+        record["gate"] = _GATE_VERSION
     with _lock:
-        _cache[_clean(key)] = dict(record)
+        _cache[_clean(key)] = record
     _save()
 
 
@@ -216,11 +245,14 @@ def geocode(address: str, district: str = "", name: str = "") -> Optional[tuple[
     then the address with its district, then the address alone.
     """
     queries = _queries(address, district, name)
-    # Only the name-led queries are held to the name check. An
-    # address-only query has nothing distinctive to check against.
-    for i, query in enumerate(queries):
-        must_contain = name if (i == 0 and name) else ""
-        hit = _geocode_one(query, must_contain=must_contain)
+    for query in queries:
+        # EVERY query is held to the name check, not just the first.
+        # Holding only the first let the second query route around the
+        # gate: "La Aldea, Ping Shan, Hong Kong" was correctly rejected
+        # for naming a house on Ping Kwai Road, and then
+        # "8 Ping Pak Lane, Ping Shan, Yuen Long, Hong Kong" returned
+        # that same wrong house and was accepted unchecked.
+        hit = _geocode_one(query, must_contain=name)
         if hit:
             return hit
     return None
@@ -237,7 +269,13 @@ def _queries(address: str, district: str, name: str) -> list[str]:
             addr = addr[: -len(suffix)].strip()
     out: list[str] = []
     if nm:
-        out.append(", ".join(x for x in [nm, dist, "Hong Kong"] if x))
+        # The bare name first. Adding the district narrows the search
+        # past the point where the geocoder can see the estate: "La
+        # Aldea, Ping Shan, Hong Kong" matches a house on Ping Kwai
+        # Road, while "La Aldea, Hong Kong" finds La Aldea itself.
+        out.append(f"{nm}, Hong Kong")
+        if dist:
+            out.append(", ".join(x for x in [nm, dist, "Hong Kong"] if x))
     if addr and dist:
         out.append(", ".join(x for x in [addr, dist, "Hong Kong"] if x))
     if addr:
@@ -257,7 +295,7 @@ def _geocode_one(query: str, must_contain: str = "") -> Optional[tuple[float, fl
     _load()
     with _lock:
         cached = _cache.get(_clean(query))
-    if cached and cached.get("lat") is not None:
+    if cached and cached.get("lat") is not None and _fresh(cached):
         return (float(cached["lat"]), float(cached["lon"]),
                 str(cached.get("label") or query))
 
@@ -327,7 +365,7 @@ def _geocode_one(query: str, must_contain: str = "") -> Optional[tuple[float, fl
         _cache[_clean(query)] = {
             "lat": round(lat, 6), "lon": round(lon, 6),
             "how": "geocoded", "label": label,
-            "query": query,
+            "query": query, "gate": _GATE_VERSION,
             "source": "openstreetmap/nominatim",
             "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
@@ -390,10 +428,11 @@ def resolve(
 def warm(keys: list[tuple[str, str, str, str]], budget: int = 60) -> dict[str, Any]:
     """Fill in locations for a batch of projects, rate-limited.
 
-    Called in a background thread so the map page still returns in a
-    second. Nominatim allows one request a second, so this takes about
-    as many seconds as there are projects — which is exactly why it
-    cannot happen during a page render.
+    Nominatim allows one request a second, so this takes about as many
+    seconds as there are projects. It therefore runs inside a request —
+    Cloud Run freezes the container once a response has been sent, so
+    a thread started from a page view would be cut off part-way and
+    place nothing at all.
 
     ``keys`` is ``[(project_key, address, district, name)]``. Anything
     already on file is skipped, and anything already *confirmed* is

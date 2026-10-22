@@ -216,7 +216,10 @@ class TestGeocoderBehaviour(unittest.TestCase):
     def test_queries_try_the_estate_name_first(self):
         from demo.geo import _queries
         qs = _queries("8 Ping Pak Lane", "Ping Shan", "La Aldea")
-        self.assertEqual(qs[0], "La Aldea, Ping Shan, Hong Kong")
+        # the bare name leads, because adding the district narrows the
+        # search past the point the geocoder can see the estate
+        self.assertTrue(qs[0].startswith("La Aldea"))
+        self.assertIn("La Aldea, Ping Shan, Hong Kong", qs)
         self.assertIn("8 Ping Pak Lane, Ping Shan, Hong Kong", qs)
 
     def test_an_address_already_saying_hong_kong_is_not_doubled(self):
@@ -353,11 +356,11 @@ class TestARelevanceGate(unittest.TestCase):
         self.assertTrue(_result_is_the_right_place(
             "La Aldea 南屏匯, Ping Shan", "La Aldea"))
 
-    def test_only_the_name_query_is_held_to_the_gate(self):
-        """Address queries legitimately return street addresses."""
+    def test_every_query_is_held_to_the_gate(self):
+        """A result that does not name the estate is never accepted,
+        whichever query produced it."""
         src = (Path(__file__).resolve().parents[1] / "demo" / "geo.py").read_text()
-        self.assertIn("must_contain = name if (i == 0 and name) else \"\"",
-                      src)
+        self.assertIn("_geocode_one(query, must_contain=name)", src)
 
 
 class TestASuggestionIsFoundAgain(unittest.TestCase):
@@ -718,6 +721,113 @@ class TestTheFillHappensInTheRequest(unittest.TestCase):
         self.assertEqual(r.status_code, 303)
         self.assertIn("/map?saved=", r.headers["location"])
         self.assertIn("placed+2", r.headers["location"])
+
+
+
+class TestEveryQueryIsGated(unittest.TestCase):
+    """The gate must not be routeable around.
+
+    Held only against the first query, a bad match was simply accepted
+    on the second: "La Aldea, Ping Shan, Hong Kong" was correctly
+    rejected for naming a house on Ping Kwai Road, and then
+    "8 Ping Pak Lane, Ping Shan, Yuen Long, Hong Kong" returned that
+    same wrong house and was taken. The map showed a confident pin on
+    the wrong building.
+    """
+
+    def test_every_query_carries_the_name(self):
+        src = (Path(__file__).resolve().parents[1] / "demo" / "geo.py").read_text()
+        self.assertIn("hit = _geocode_one(query, must_contain=name)", src)
+        self.assertNotIn('i == 0 and name', src)
+
+    def test_the_bare_name_is_tried_before_the_district(self):
+        """"La Aldea, Ping Shan, Hong Kong" finds a house on Ping Kwai
+        Road; "La Aldea, Hong Kong" finds La Aldea. Adding the district
+        narrows the search past the estate."""
+        from demo.geo import _queries
+        qs = _queries("8 Ping Pak Lane, Ping Shan, Yuen Long", "Ping Shan",
+                      "La Aldea")
+        self.assertEqual(qs[0], "La Aldea, Hong Kong")
+        self.assertIn("La Aldea, Ping Shan, Hong Kong", qs)
+
+    def test_the_real_la_aldea_match_passes_the_gate(self):
+        from demo.geo import _result_is_the_right_place
+        self.assertTrue(_result_is_the_right_place(
+            "La Aldea, 8, Hung Uk Tsuen, Yuen Long District, "
+            "New Territories, Hong Kong, China", "La Aldea"))
+
+    def test_the_wrong_ping_kwai_road_match_fails_every_time(self):
+        from demo.geo import _result_is_the_right_place
+        for n in (1, 2, 3):
+            self.assertFalse(_result_is_the_right_place(
+                f"House {n}, Ping Kwai Road, Hung Uk Tsuen, Yuen Long "
+                "District, New Territories, Hong Kong, China", "La Aldea"))
+
+
+class TestRuleChangesInvalidateOldAnswers(unittest.TestCase):
+    """A stored suggestion made under older rules must not survive them.
+
+    Same principle as the parsed-workbook cache: any cache over derived
+    output is keyed on a version derived from the producing code.
+    """
+
+    def test_a_record_with_no_gate_reads_as_nothing(self):
+        from demo.geo import _fresh
+        self.assertFalse(_fresh({"lat": 22.4, "lon": 114.0, "how": "geocoded"}))
+
+    def test_a_record_from_an_older_gate_reads_as_nothing(self):
+        import demo.geo as geo
+        self.assertFalse(geo._fresh({
+            "lat": 22.4, "lon": 114.0, "how": "geocoded", "gate": 0}))
+        self.assertFalse(geo._fresh({
+            "lat": 22.4, "lon": 114.0, "how": "geocoded",
+            "gate": geo._GATE_VERSION - 1}))
+
+    def test_a_record_from_the_current_gate_is_fresh(self):
+        import demo.geo as geo
+        self.assertTrue(geo._fresh({
+            "lat": 22.4, "lon": 114.0, "how": "geocoded",
+            "gate": geo._GATE_VERSION}))
+
+    def test_a_confirmed_location_survives_any_rule_change(self):
+        """The valuer put that pin there. No amount of rule-tuning puts
+        it somewhere else."""
+        import demo.geo as geo
+        self.assertTrue(geo._fresh({"lat": 22.4, "lon": 114.0,
+                                    "how": "confirmed"}))
+
+    def test_a_stale_suggestion_is_treated_as_absent(self):
+        """Written straight into the cache, the way a record written
+        by the PREVIOUS version of the code would be — remember() now
+        stamps the current gate on everything it writes."""
+        import demo.geo as geo
+        with geo._lock:
+            geo._cache.clear()
+            geo._cache["stale key"] = {"lat": 22.4, "lon": 114.0,
+                                       "how": "geocoded", "gate": 0}
+        self.assertEqual(geo.coords("stale key"), (None, None, ""))
+        with geo._lock:
+            geo._cache.clear()
+
+    def test_a_confirmed_pin_written_the_old_way_survives(self):
+        import demo.geo as geo
+        with geo._lock:
+            geo._cache.clear()
+            geo._cache["old confirmed"] = {"lat": 22.4, "lon": 114.0,
+                                           "how": "confirmed"}
+        self.assertEqual(geo.coords("old confirmed")[2], "confirmed")
+        with geo._lock:
+            geo._cache.clear()
+
+    def test_every_stored_thing_carries_the_gate(self):
+        import demo.geo as geo
+        with geo._lock:
+            geo._cache.clear()
+        geo.remember("gated key", {"lat": 22.4, "lon": 114.0,
+                                   "how": "geocoded"})
+        self.assertEqual(geo.lookup("gated key")["gate"], geo._GATE_VERSION)
+        with geo._lock:
+            geo._cache.clear()
 
 
 if __name__ == "__main__":
