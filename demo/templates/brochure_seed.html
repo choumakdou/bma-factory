@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Attach screenshots · {{ dev.name }} · BMA Factory</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="case-head">
+    <div class="case-head-left">
+      <div class="case-ref-row">
+        <a class="case-back" href="/brochure/{{ dev.id }}">← {{ dev.name }}</a>
+        <span class="case-ref-sep">·</span>
+        <span class="case-ref">Round {{ round.number }}</span>
+      </div>
+      <h1>Attach the screenshots</h1>
+      <div class="case-addr">
+        Everything on one go. Each file is filed under
+        <code>{{ shots_path }}</code> and shown against the row it
+        proves.
+      </div>
+    </div>
+  </header>
+
+  {% include "_nav.html" %}
+
+  <main class="case-main">
+    <form method="post" action="/brochure/{{ dev.id }}/seed"
+          enctype="multipart/form-data">
+
+      {% for item in items %}
+      {% set rows = current.get(item.id) or [] %}
+      <section class="card">
+        <div class="section-head">
+          <h2>{{ item.name }}</h2>
+          <div class="section-meta">
+            <span class="meta-pill">{{ rows|length }} recorded</span>
+          </div>
+        </div>
+
+        <table class="content-table">
+          <thead>
+            <tr>
+              <th style="width:110px">Check</th>
+              <th>{{ item.evidence_label }}</th>
+              <th>Title</th>
+              <th style="width:150px">Date</th>
+              <th style="width:230px">Screenshot</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in rows %}
+            <tr>
+              <td><input type="hidden" name="item" value="{{ item.id }}"></td>
+              <td><input name="ev_ref" value="{{ r.ref }}"
+                         placeholder="{{ item.evidence_label }}"></td>
+              <td><input name="ev_title" value="{{ r.title }}"
+                         placeholder="and its title"></td>
+              <td><input type="date" name="ev_date" value="{{ r.date }}"></td>
+              <td class="small">
+                {% if r.file_id %}
+                  <a class="dl-link"
+                     href="https://drive.google.com/file/d/{{ r.file_id }}/view"
+                     target="_blank" rel="noopener">already filed →</a>
+                {% else %}
+                  <span class="muted">no picture yet</span>
+                {% endif %}
+                <input type="file" name="ev_file" accept="image/*,application/pdf"
+                       class="ev-file">
+              </td>
+            </tr>
+            {% endfor %}
+
+            {% for _ in range(2) %}
+            <tr class="ev-new">
+              <td><input type="hidden" name="item" value="{{ item.id }}"></td>
+              <td><input name="ev_ref" placeholder="{{ item.evidence_label }}"></td>
+              <td><input name="ev_title" placeholder="and its title"></td>
+              <td><input type="date" name="ev_date"></td>
+              <td><input type="file" name="ev_file" accept="image/*,application/pdf"
+                         class="ev-file"></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+      {% endfor %}
+
+      <section class="card">
+        <p class="muted small">
+          A row with text but no file keeps what is already filed. A row
+          with nothing in it is ignored. Uploading a second file for a
+          row replaces it.
+        </p>
+        <p>
+          <button class="gen-btn" type="submit">Save them all</button>
+          <a class="gen-btn gen-btn-secondary"
+             href="/brochure/{{ dev.id }}">Cancel</a>
+        </p>
+      </section>
+    </form>
+  </main>
+</body>
+</html>

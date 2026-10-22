@@ -440,5 +440,58 @@ class TestFolderCreationIsNotOnPageLoad(unittest.TestCase):
         self.assertIn("/brochure/{dev_id}/folder", posts)
 
 
+
+class TestSeedingTheWholeSetAtOnce(unittest.TestCase):
+    """Six screenshots arrived as six separate round trips last time and
+    the typed records never got their pictures. The seed form takes the
+    whole set in one submission."""
+
+    def test_the_seed_form_is_reachable(self):
+        from demo.app import app
+        gets = {r.path for r in app.routes
+                if hasattr(r, "methods") and "GET" in (r.methods or set())}
+        posts = {r.path for r in app.routes
+                 if hasattr(r, "methods") and "POST" in (r.methods or set())}
+        self.assertIn("/brochure/{dev_id}/seed", gets)
+        self.assertIn("/brochure/{dev_id}/seed", posts)
+
+    def test_the_development_page_offers_it(self):
+        from pathlib import Path
+        tpl = (Path(__file__).resolve().parents[1] / "demo" / "templates"
+               / "brochure_development.html").read_text()
+        self.assertIn("/seed", tpl)
+
+    def test_the_form_carries_one_row_per_check(self):
+        from pathlib import Path
+        from demo.brochure import CHECK_ITEMS
+        tpl = (Path(__file__).resolve().parents[1] / "demo" / "templates"
+               / "brochure_seed.html").read_text()
+        for item in CHECK_ITEMS:
+            self.assertIn('value="{{ item.id }}"', tpl)
+        # and room to add rows the first set did not have
+        self.assertIn("ev-new", tpl)
+
+    def test_it_is_multipart_so_files_actually_upload(self):
+        from pathlib import Path
+        tpl = (Path(__file__).resolve().parents[1] / "demo" / "templates"
+               / "brochure_seed.html").read_text()
+        self.assertIn('enctype="multipart/form-data"', tpl)
+
+    def test_a_filed_row_keeps_its_existing_screenshot(self):
+        """Re-saving the typed references must not wipe the pictures."""
+        import inspect
+        from demo import app as appmod
+        src = inspect.getsource(appmod.brochure_seed)
+        self.assertIn('prior[0].get("file_id")', src)
+
+    def test_files_are_named_after_what_they_prove(self):
+        """A folder of Screenshot1.png tells nobody anything."""
+        from demo.app import _safe
+        self.assertEqual(_safe("ozp-sheet"), "ozp-sheet")
+        self.assertEqual(_safe("S/HSK/4"), "S-HSK-4")
+        self.assertEqual(_safe(""), "")
+        self.assertNotIn("/", _safe("S/YL-PS/22"))
+
+
 if __name__ == "__main__":
     unittest.main()

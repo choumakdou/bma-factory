@@ -744,6 +744,138 @@ async def brochure_update(request: Request, dev_id: str):
     return RedirectResponse(f"/brochure/{dev_id}?saved=Details+updated", status_code=303)
 
 
+@app.get("/brochure/{dev_id}/seed", response_class=HTMLResponse)
+def brochure_seed_form(request: Request, dev_id: str) -> HTMLResponse:
+    """Attach a whole set of screenshots in one go.
+
+    A first review turns up a handful of screens at once — three OZP
+    sheets, two location plans, an aerial. Doing that one row at a
+    time is six round trips for the same evidence, and it is how the
+    earlier set ended up typed in but never attached.
+    """
+    from demo import brochure as B
+    devs = B.load_developments()
+    dev = next((d for d in devs if d.id == dev_id), None)
+    if dev is None:
+        raise HTTPException(status_code=404, detail="no such development")
+    rnd = dev.current_round
+    if rnd is None:
+        raise HTTPException(status_code=400, detail="no open round")
+
+    current = {i.id: rnd.items.get(i.id, {}).get("evidence") or []
+               for i in B.CHECK_ITEMS}
+    return templates.TemplateResponse(
+        request,
+        "brochure_seed.html",
+        {
+            "auth": _auth_state(),
+            "dev": dev.to_dict(),
+            "round": rnd,
+            "items": B.CHECK_ITEMS,
+            "current": current,
+            "shots_path": B.screenshot_path(dev, rnd),
+        },
+    )
+
+
+@app.post("/brochure/{dev_id}/seed")
+async def brochure_seed(request: Request, dev_id: str):
+    """Store the attached set: upload each file, then bind it to a row.
+
+    The rows arrive as parallel form lists and the files as
+    ``file_0..file_n``, so row *i* of the metadata belongs to
+    ``file_i``. A row with no file keeps its typed reference and loses
+    no screenshot already on file.
+    """
+    from demo import brochure as B
+
+    form = await request.form()
+    devs = B.load_developments()
+    dev = next((d for d in devs if d.id == dev_id), None)
+    if dev is None:
+        raise HTTPException(status_code=404, detail="no such development")
+    rnd = dev.current_round
+    if rnd is None:
+        raise HTTPException(status_code=400, detail="no open round")
+
+    def _list(name: str) -> list[Any]:
+        v = form.getlist(name)
+        return list(v) if isinstance(v, list) else ([v] if v else [])
+
+    item_ids = _list("item")
+    refs = _list("ev_ref")
+    titles = _list("ev_title")
+    dates = _list("ev_date")
+    files = _list("ev_file")
+
+    kinds = {i.id: i.evidence_kind for i in B.CHECK_ITEMS}
+    by_item: dict[str, list[dict[str, Any]]] = {}
+    uploaded = 0
+
+    for i in range(max(len(item_ids), len(refs), len(files))):
+        item_id = str(item_ids[i] or "").strip() if i < len(item_ids) else ""
+        if item_id not in kinds:
+            continue
+        ref = str(refs[i] or "").strip() if i < len(refs) else ""
+        title = str(titles[i] or "").strip() if i < len(titles) else ""
+        date = str(dates[i] or "").strip() if i < len(dates) else ""
+        upload = files[i] if i < len(files) else None
+        has_file = hasattr(upload, "filename") and bool(
+            getattr(upload, "filename", ""))
+        if not (ref or title or date or has_file):
+            continue
+
+        row: dict[str, Any] = {
+            "ref": ref, "title": title, "date": date,
+            "kind": kinds[item_id], "file_id": "", "file_name": "",
+        }
+        if has_file:
+            data = await _read_upload(upload)
+            if data:
+                saved = _store_evidence_file(
+                    dev, rnd, kinds[item_id], ref or item_id,
+                    getattr(upload, "filename", "") or "shot.png", data)
+                if saved:
+                    row["file_id"] = saved.get("id", "")
+                    row["file_name"] = saved.get("name", "")
+                    uploaded += 1
+        if not row["file_id"]:
+            # No new file on this row — keep whatever screenshot was
+            # already attached to the matching row, or nothing.
+            prior = [r for r in (rnd.items.get(item_id, {}).get("evidence") or [])
+                     if (r.get("ref") or "") == ref]
+            if prior and prior[0].get("file_id"):
+                row["file_id"] = prior[0]["file_id"]
+                row["file_name"] = prior[0].get("file_name", "")
+        by_item.setdefault(item_id, []).append(row)
+
+    if not by_item:
+        return RedirectResponse(
+            f"/brochure/{dev_id}?error=Nothing+was+filled+in.",
+            status_code=303)
+
+    for item_id, rows in by_item.items():
+        state = dict(rnd.items.get(item_id) or {})
+        state["evidence"] = rows
+        # The latest date across the rows is what the source shows now.
+        dates_seen = sorted(d for d in (r.get("date") for r in rows) if d)
+        if dates_seen:
+            latest = dates_seen[-1]
+            state["source_version"] = latest
+            newest = next(r for r in reversed(rows) if r.get("date") == latest)
+            state["evidence"] = rows
+        rnd.items[item_id] = state
+
+    ok, detail = B.save_developments(devs)
+    if not ok:
+        return RedirectResponse(
+            f"/brochure/{dev_id}?error=Could+not+save%3A+{detail}",
+            status_code=303)
+    return RedirectResponse(
+        f"/brochure/{dev_id}?saved={quote_plus(f'{uploaded} screenshot(s) filed')}",
+        status_code=303)
+
+
 @app.get("/brochure/{dev_id}", response_class=HTMLResponse)
 def brochure_development(request: Request, dev_id: str) -> HTMLResponse:
     """One development: its rounds, and the round's stages as sub-tabs."""
@@ -1006,7 +1138,8 @@ async def _read_evidence(
             name = getattr(upload, "filename", "") or "evidence"
             data = await _read_upload(upload)
             if data:
-                saved = _store_evidence_file(dev, rnd, item, name, data)
+                saved = _store_evidence_file(
+                    dev, rnd, item.evidence_kind, ref, name, data)
                 if saved:
                     row["file_id"] = saved.get("id", "")
                     row["file_name"] = saved.get("name", name)
@@ -1030,13 +1163,17 @@ async def _read_upload(upload: Any) -> bytes:
 
 
 def _store_evidence_file(
-    dev: Any, rnd: Any, item: Any, name: str, data: bytes,
+    dev: Any, rnd: Any, kind: str, ref: str, name: str, data: bytes,
 ) -> dict[str, Any] | None:
     """Put a screenshot in that round's own folder in Drive.
 
     ``bma-factory/Sales Brochure Review/<Development>/<YYYYMM>/`` — the
     month is the round's target month, so a screenshot is filed under
     the review it belongs to rather than in one flat evidence dump.
+
+    The file is named after the check and the reference it proves
+    (``ozp-S-HSK-4.png``), because a folder full of ``Screenshot1.png``
+    tells nobody anything on the second visit.
     """
     try:
         from demo import brochure as B
@@ -1048,12 +1185,11 @@ def _store_evidence_file(
         path = B.screenshot_path(dev, rnd)
         folder = resolve_path(path)
         drive = get_drive()
-        # Name the file after what it proves, so the folder is readable
-        # without opening anything: the sheet ref, then a counter.
-        ref = str(getattr(item, "id", "") or "evidence")
-        safe_ref = re.sub(r"[^A-Za-z0-9._-]+", "-", ref).strip("-") or "evidence"
-        existing = _evidence_names_in(folder, safe_ref)
-        final = f"{safe_ref}-{existing + 1}.png" if existing else f"{safe_ref}.png"
+        stem = "-".join(
+            x for x in (_safe(kind), _safe(ref)) if x
+        ) or "evidence"
+        existing = _evidence_names_in(folder, stem)
+        final = f"{stem}-{existing + 1}.png" if existing else f"{stem}.png"
         media = MediaIoBaseUpload(
             _io.BytesIO(data), mimetype=_guess_mime(name), resumable=False)
         f = drive.files().create(
@@ -1066,6 +1202,11 @@ def _store_evidence_file(
     except Exception as e:  # noqa: BLE001
         log.warning("could not store the evidence file: %s", e)
         return None
+
+
+def _safe(text: str) -> str:
+    """A Drive-safe file-name fragment."""
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", str(text or "")).strip("-")
 
 
 def _guess_mime(name: str) -> str:
