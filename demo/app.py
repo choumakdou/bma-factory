@@ -27,7 +27,6 @@ import json
 import sys
 import logging
 import re
-import threading
 import traceback
 from datetime import date, datetime
 from urllib.parse import quote_plus
@@ -318,58 +317,75 @@ def _intake_rows(
 # Map — every project, on OpenStreetMap
 # ---------------------------------------------------------------------------
 
-#: Set while a background location fill is running, so opening the map
-#: twice in a minute does not start two of them.
-_warm_lock = threading.Lock()
-_warm_running = False
+#: How many lookups a single ``/map`` page view will do for itself.
+#: One, deliberately: it is the difference between the list filling
+#: itself in as the app is used and a page that stalls. The rest wait
+#: for the explicit "Look up missing locations" pass.
+_WARM_BUDGET = 1
+
+#: How many a deliberate pass will do. At one request a second this is
+#: about forty seconds of waiting in the browser.
+_WARM_BUDGET_BULK = 40
 
 
-def _warm_locations_in_background(groups: dict[str, list[dict[str, Any]]]) -> None:
-    """Kick off a rate-limited geocode pass without blocking the page."""
-    global _warm_running
-    with _warm_lock:
-        if _warm_running:
-            return
-        _warm_running = True
+def _fill_one_missing_location(groups: dict[str, list[dict[str, Any]]]) -> None:
+    """Geocode a single missing project, inline, while this request is open.
+
+    Cloud Run suspends the container's CPU once a response has been
+    sent, so a background thread started from a page view does not
+    finish — the first version of this used one and placed nothing at
+    all, silently. One lookup is about a second and keeps the page
+    responsive; the remainder are picked up on later visits, or all at
+    once by the explicit pass.
+    """
+    from demo import geo
+
     targets = [
         (p["key"], p.get("address", ""), p.get("district", ""), p.get("name", ""))
         for pins in groups.values() for p in pins
         if p.get("lat") is None and p.get("key")
     ]
-    if not targets:
-        with _warm_lock:
-            _warm_running = False
+    # Never re-ask about something the geocoder has already refused:
+    # that costs a second per page view for an answer that will not
+    # change.
+    todo = [t for t in targets if not geo.lookup(t[0]).get("tried")]
+    if not todo:
         return
-
-    def _run() -> None:
-        global _warm_running
-        try:
-            from demo import geo
-            geo.warm(targets)
-        except Exception as e:  # noqa: BLE001
-            log.warning("background location fill failed: %s", e)
-        finally:
-            with _warm_lock:
-                _warm_running = False
-
-    threading.Thread(target=_run, name="map-warm", daemon=True).start()
+    try:
+        geo.warm(todo[:_WARM_BUDGET])
+    except Exception as e:  # noqa: BLE001
+        log.info("inline location fill failed: %s", e)
 
 
 @app.post("/map/warm", include_in_schema=False)
 async def map_warm(request: Request):
-    """Fill in every location that is still missing, on demand.
+    """Look up every missing location, in this request.
 
-    The page does this by itself in the background; this route is the
-    manual "do it now" for when the valuer does not want to wait for
-    the next page view.
+    Deliberately synchronous. Cloud Run suspends a container's CPU once
+    the response has been sent, so a thread started during a page view
+    is frozen part-way through — the first version of this used one and
+    silently placed nothing. Work that has to finish has to happen
+    while a request is still open.
+
+    Budgeted, because the geocoder allows one request a second and this
+    runs in a browser's wait.
     """
+    from demo import geo
     from demo import mappins
     groups = mappins.collect()
-    missing = sum(1 for pins in groups.values() for p in pins
-                  if p["lat"] is None)
-    _warm_locations_in_background(groups)
+    targets = [
+        (p["key"], p.get("address", ""), p.get("district", ""), p.get("name", ""))
+        for pins in groups.values() for p in pins
+        if p.get("lat") is None and p.get("key")
+    ]
+    untried = [t for t in targets if not geo.lookup(t[0]).get("tried")]
+    n = min(len(untried), _WARM_BUDGET_BULK)
+    out = geo.warm(untried[:n]) if n else {"placed": 0, "no_match": 0,
+                                           "already_had_one": 0}
+    note = (f"placed {out['placed']}, no match {out['no_match']}, "
+            f"skipped {out['already_had_one']}")
     return RedirectResponse(
-        f"/map?warmed={missing}", status_code=303)
+        f"/map?saved={quote_plus(note)}", status_code=303)
 
 
 @app.get("/map", response_class=HTMLResponse)
@@ -387,12 +403,9 @@ def map_page(request: Request) -> HTMLResponse:
     groups = mappins.collect()
     stats = mappins.summary(groups)
 
-    # Anything still without a location gets looked up in the background
-    # so the next visit has pins. This page never waits for it: the
-    # geocoder allows one request a second, and fifty of those is a
-    # minute the valuer would be sitting through.
-    if any(p["lat"] is None for pins in groups.values() for p in pins):
-        _warm_locations_in_background(groups)
+    # One missing location gets looked up while this request is open,
+    # so the list fills itself in as the app is used.
+    _fill_one_missing_location(groups)
 
     return templates.TemplateResponse(
         request,

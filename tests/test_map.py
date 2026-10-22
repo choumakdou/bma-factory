@@ -587,70 +587,104 @@ class TestFittingTheView(unittest.TestCase):
         self.assertIn("fitBounds", js)
 
 
-class TestTheWarmIsBackground(unittest.TestCase):
-    """Locations appear without Bobby clicking anything — and the page
-    still returns in about a second."""
+class TestTheFillHappensInTheRequest(unittest.TestCase):
+    """Locations appear without Bobby clicking — but only if the work
+    happens while a request is still open.
 
-    def test_opening_the_map_starts_a_background_fill(self):
+    Cloud Run suspends a container's CPU once the response has been
+    sent. The first version of this used a background thread and placed
+    absolutely nothing, silently: the thread was frozen a fraction of
+    a second in. These tests pin the work inside the request.
+    """
+
+    def test_the_map_page_fills_one_location_itself(self):
         from unittest import mock
         from fastapi.testclient import TestClient
         from demo import app as appmod
-        fired = []
-        with mock.patch.object(appmod, "_warm_locations_in_background",
-                               side_effect=lambda g: fired.append(g)):
+        called = []
+        with mock.patch.object(appmod, "_fill_one_missing_location",
+                               side_effect=lambda g: called.append(g)):
             TestClient(appmod.app).get("/map")
-        self.assertTrue(fired, "the map page should kick off a fill")
+        self.assertTrue(called, "the map page should place one itself")
 
-    def test_a_fill_is_only_started_once_at_a_time(self):
+    def test_one_page_view_only_asks_for_one(self):
         from demo import app as appmod
-        appmod._warm_running = False
-        started = []
-        real_thread = appmod.threading.Thread
+        self.assertEqual(appmod._WARM_BUDGET, 1)
 
-        class _Fake:
-            def __init__(self, target=None, name=None, daemon=None):
-                started.append(name)
-
-            def start(self):
-                pass
-
-        appmod.threading.Thread = _Fake
-        try:
-            groups = {"pv": [{"key": "k", "address": "a", "district": "d",
-                              "name": "n", "lat": None}]}
-            appmod._warm_locations_in_background(groups)
-            appmod._warm_running = True      # pretend the first is still going
-            appmod._warm_locations_in_background(groups)
-        finally:
-            appmod.threading.Thread = real_thread
-            appmod._warm_running = False
-        self.assertEqual(len(started), 1)
-
-    def test_nothing_to_fill_starts_nothing(self):
+    def test_a_deliberate_pass_has_a_much_larger_budget(self):
         from demo import app as appmod
-        appmod._warm_running = False
-        started = []
-        real = appmod.threading.Thread
-        appmod.threading.Thread = lambda *a, **k: started.append(1)
-        try:
-            appmod._warm_locations_in_background(
-                {"pv": [{"key": "k", "lat": 22.4, "lon": 114.0}]})
-        finally:
-            appmod.threading.Thread = real
-        self.assertEqual(started, [])
+        self.assertGreaterEqual(appmod._WARM_BUDGET_BULK, 20)
+
+    def test_there_is_no_background_thread_any_more(self):
+        """A thread started from a page view is frozen by Cloud Run.
+        Its presence would be a silent no-op that looks like it works."""
+        from demo import app as appmod
+        self.assertFalse(hasattr(appmod, "_warm_locations_in_background"))
+        src = (Path(__file__).resolve().parents[1] / "demo" / "app.py").read_text()
+        self.assertNotIn("_warm_locations_in_background", src)
+
+    def test_a_refusal_is_remembered_so_it_is_not_re_asked(self):
+        """Otherwise every page view costs a second re-asking about a
+        building the public map has never heard of."""
+        import demo.geo as geo
+        from unittest import mock
+        with geo._lock:
+            geo._cache.clear()
+        with mock.patch.object(geo, "geocode", return_value=None):
+            self.assertIsNone(geo.suggest("refused key", "a", "d", "n"))
+        self.assertTrue(geo.lookup("refused key").get("tried"))
+        with geo._lock:
+            geo._cache.clear()
+
+    def test_an_already_refused_project_is_skipped_by_the_fill(self):
+        """The skip is the caller's job: `warm` is told what to do, the
+        page decides what is worth asking about."""
+        import demo.geo as geo
+        from demo import app as appmod
+        from unittest import mock
+        with geo._lock:
+            geo._cache.clear()
+        geo.remember("refused again", {"tried": "2026-01-01T00:00:00Z"})
+        asked = []
+        with mock.patch.object(geo, "geocode",
+                               side_effect=lambda *a, **k: asked.append(1)):
+            appmod._fill_one_missing_location(
+                {"pv": [{"key": "refused again", "address": "a",
+                         "district": "d", "name": "n", "lat": None}]})
+        self.assertEqual(asked, [], "must not re-ask a refused address")
+        with geo._lock:
+            geo._cache.clear()
+
+    def test_a_missing_project_is_asked_about_once(self):
+        import demo.geo as geo
+        from demo import app as appmod
+        from unittest import mock
+        with geo._lock:
+            geo._cache.clear()
+        asked = []
+        with mock.patch.object(geo, "geocode",
+                               side_effect=lambda *a, **k: asked.append(1) or None):
+            appmod._fill_one_missing_location(
+                {"pv": [{"key": "fresh key", "address": "a",
+                         "district": "d", "name": "n", "lat": None}]})
+        self.assertTrue(asked)
+        with geo._lock:
+            geo._cache.clear()
 
     def test_a_confirmed_location_is_never_re_looked_up(self):
         import demo.geo as geo
         from unittest import mock
+        with geo._lock:
+            geo._cache.clear()
         geo.confirm("warm test key", 22.4, 114.0)
         called = []
         with mock.patch.object(geo, "suggest",
                                side_effect=lambda *a, **k: called.append(1)):
             out = geo.warm([("warm test key", "a", "d", "n")])
-        self.assertEqual(out["already_have"] if "already_have" in out
-                         else out["already_had_one"], 1)
         self.assertEqual(called, [])
-        geo.forget("warm test key")
+        self.assertEqual(out["already_had_one"], 1)
+        with geo._lock:
+            geo._cache.clear()
 
     def test_warm_respects_its_budget(self):
         import demo.geo as geo
@@ -671,11 +705,19 @@ class TestTheWarmIsBackground(unittest.TestCase):
             out = geo.warm([("k", "a", "d", "n")])
         self.assertEqual(out["no_match"], 1)
 
-    def test_the_manual_warm_route_exists(self):
+    def test_the_manual_warm_route_exists_and_reports(self):
+        from fastapi.testclient import TestClient
         from demo.app import app
-        posts = {r.path for r in app.routes
-                 if hasattr(r, "methods") and "POST" in (r.methods or set())}
-        self.assertIn("/map/warm", posts)
+        from demo import geo
+        from unittest import mock
+        # Mocked: this route really does call the geocoder, one request
+        # a second, and the suite must not spend a minute on it.
+        with mock.patch.object(geo, "warm", return_value={
+                "placed": 2, "no_match": 1, "already_had_one": 0}) as w:
+            r = TestClient(app).post("/map/warm", follow_redirects=False)
+        self.assertEqual(r.status_code, 303)
+        self.assertIn("/map?saved=", r.headers["location"])
+        self.assertIn("placed+2", r.headers["location"])
 
 
 if __name__ == "__main__":

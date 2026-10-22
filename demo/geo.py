@@ -272,6 +272,7 @@ def _geocode_one(query: str, must_contain: str = "") -> Optional[tuple[float, fl
     for attempt in range(3):
         try:
             import json as _json
+            import urllib.error as _ue
             import urllib.parse as _up
             import urllib.request as _ur
 
@@ -286,11 +287,17 @@ def _geocode_one(query: str, must_contain: str = "") -> Optional[tuple[float, fl
                 data = _json.loads(resp.read().decode("utf-8"))
             break
         except Exception as e:  # noqa: BLE001
-            if attempt == 2:
+            # Only a throttled or briefly-down instance is worth
+            # waiting for. Retrying every error with a backoff turned a
+            # rejected request into a 7-second stall, and the test
+            # suite into 78 seconds.
+            retryable = (
+                "429" in str(e) or "503" in str(e)
+                or isinstance(e, _ue.URLError)
+            )
+            if attempt == 2 or not retryable:
                 log.info("geocode failed for %r: %s", query, e)
                 return None
-            # A throttled public instance wants a longer pause, not
-            # an immediate retry.
             time.sleep(2.5 * (attempt + 1))
             _last_call = time.monotonic()
 
@@ -341,10 +348,16 @@ def suggest(key: str, address: str = "", district: str = "", name: str = "") -> 
     """
     got = geocode(address, district, name)
     if not got:
+        # Remember the refusal. Otherwise every page view re-asks about
+        # a building the public map has never heard of, costing a
+        # second each time for an answer that will not change.
+        if key:
+            remember(key, {"tried": time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                                   time.gmtime()),
+                           "source": "openstreetmap/nominatim"})
         return None
     lat, lon, label = got
-    if key and _clean(key) not in _queries(address, district, name) + [key]:
-        # only write the project key when the project actually has one
+    if key:
         remember(key, {
             "lat": lat, "lon": lon, "how": "geocoded",
             "label": label, "source": "openstreetmap/nominatim",
