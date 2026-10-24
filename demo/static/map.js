@@ -57,7 +57,7 @@
     // thing in the panel and the two can be read against each other.
     var cls = 'map-tag ' +
       (pin.how === 'confirmed' ? 'is-confirmed' : 'is-geocoded') +
-      (pin.tab === 'sbr' ? ' is-sbr' : '');
+      (pin.tab === 'sbr' ? ' is-sbr' : (pin.tab === 'sv' ? ' is-sv' : ''));
     return L.divIcon({
       className: 'map-marker',
       html: '<div class="' + cls + '" title="' + esc(pin.name) + '">' +
@@ -77,7 +77,15 @@
            '</div>';
     }
     var meta = [];
-    if (pin.tab === 'sbr') {
+    if (pin.tab === 'sv') {
+      // Site Value — the valuer's own sheet.
+      if (pin.client) meta.push(esc(pin.client));
+      if (pin.site_area) meta.push('site ' + esc(pin.site_area));
+      if (pin.value) meta.push(esc(pin.value));
+      if (pin.rate) meta.push(esc(pin.rate));
+      if (pin.use) meta.push(esc(pin.use));
+      if (pin.valuation_date) meta.push('valued ' + esc(pin.valuation_date));
+    } else if (pin.tab === 'sbr') {
       if (pin.client) meta.push(esc(pin.client));
       if (pin.round) meta.push('Round ' + esc(pin.round));
       if (pin.target) meta.push('target ' + esc(pin.target));
@@ -111,6 +119,9 @@
            '</div>';
     } else if (!pin.how) {
       h += '<div class="map-popup-where">No location on file for this one.</div>';
+    } else if (pin.tab === 'sv') {
+      h += '<div class="map-popup-where">Position taken from your Site ' +
+           'Value sheet, row ' + esc(pin.sheet_row) + '.</div>';
     }
     h += '</div>';
     return h;
@@ -227,6 +238,7 @@
       var state = p.how === 'confirmed' ? 'is-confirmed'
                 : (p.how === 'geocoded' ? 'is-geocoded' : 'is-unlocated');
       if (p.tab === 'sbr') state += ' is-sbr';
+      if (p.tab === 'sv') state += ' is-sv';
       var badge = p.how === 'confirmed'
         ? '<span class="muted small">confirmed</span>'
         : (p.how === 'geocoded'

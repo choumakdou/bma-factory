@@ -157,6 +157,9 @@
 }
 .map-tag.is-sbr { background: #0b6b53; }
 .map-tag.is-sbr.is-geocoded { background: #fff; color: #0b6b53; border-color: #0b6b53; }
+/* Site Value — the valuer's own sheet, so a third colour entirely */
+.map-tag.is-sv { background: #8a4b08; }
+.map-tag.is-sv.is-geocoded { background: #fff; color: #8a4b08; border-color: #8a4b08; }
 
 /* ---- the view bar over the canvas ---- */
 .map-viewbar {
@@ -261,6 +264,7 @@
 }
 .map-item.is-geocoded .map-item-no { background: #fff; color: #b85a00; border: 1px dashed #b85a00; }
 .map-item.is-sbr .map-item-no { background: #0b6b53; }
+.map-item.is-sv .map-item-no { background: #8a4b08; }
 .map-item.is-flash { outline: 2px solid #1a73e8; outline-offset: -2px; background: #eef4fd; }
 .map-item-name { font-size: .84rem; font-weight: 700; }
 .map-item-addr { font-size: .74rem; color: var(--ink-2); }

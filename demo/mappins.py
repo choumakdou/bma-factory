@@ -119,7 +119,65 @@ def _norm_place(addr: str) -> str:
 
 def collect() -> dict[str, list[dict[str, Any]]]:
     """Every project, grouped by tab."""
-    return {"pv": _pv_pins(), "sbr": _sbr_pins()}
+    return {"pv": _pv_pins(), "sbr": _sbr_pins(), "sv": _site_value_pins()}
+
+
+def _site_value_pins() -> list[dict[str, Any]]:
+    """Site Value — the valuer's own sheet of site valuations.
+
+    Read through ``demo.sites`` so the column mapping, the settings and
+    the "nothing configured yet" state all live in one place.
+    """
+    pins: list[dict[str, Any]] = []
+    try:
+        from demo import geo
+        from demo import sites as S
+        data = S.read_sites()
+    except Exception as e:  # noqa: BLE001
+        log.warning("could not list site-value pins: %s", e)
+        return pins
+
+    for site in data.get("sites") or []:
+        address = str(site.get("address") or "").strip()
+        name = str(site.get("name") or "").strip()
+        key = _address_key(address, site.get("district", ""), name)
+        if not key:
+            continue
+
+        lat, lon = site.get("lat"), site.get("lon")
+        how = ""
+        if lat is not None and lon is not None:
+            # Coordinates in the valuer's own sheet are his data, the
+            # same as a pin he dropped himself. They go in as confirmed
+            # — but never over a pin he has already set himself.
+            if not geo.is_confirmed(key):
+                geo.confirm(key, lat, lon, note="from the Site Value sheet")
+            lat, lon, how = geo.coords(key)
+        else:
+            lat, lon, how = geo.coords(key)
+
+        pins.append({
+            "key": key,
+            "id": f"site-row-{site.get('row')}",
+            "tab": "sv",
+            "name": name or address or f"Row {site.get('row')}",
+            "address": address,
+            "district": str(site.get("district") or ""),
+            "href": f"/map/site-value#site-{site.get('row')}",
+            "lat": lat,
+            "lon": lon,
+            "how": how,
+            "label": "",
+            "source": "site-value",
+            "client": site.get("client", ""),
+            "site_area": site.get("site_area", ""),
+            "value": site.get("value", ""),
+            "rate": site.get("rate", ""),
+            "use": site.get("use", ""),
+            "valuation_date": site.get("valuation_date", ""),
+            "sheet_row": site.get("row"),
+        })
+    return pins
 
 
 def _pv_pins() -> list[dict[str, Any]]:

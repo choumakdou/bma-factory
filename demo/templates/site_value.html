@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Site Value · BMA Factory</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/map.css">
+</head>
+<body>
+  <header class="case-head">
+    <div class="case-head-left">
+      <div class="case-ref-row">
+        <a class="case-back" href="/map">← Map</a>
+        <span class="case-ref-sep">·</span>
+        <span class="case-ref">Site Value</span>
+      </div>
+      <h1>Site Value</h1>
+      <div class="case-addr">
+        Your valuations for sites, read from one Google Sheet and shown
+        as the third tab on the map.
+      </div>
+    </div>
+  </header>
+
+  {% include "_nav.html" %}
+
+  {% if request.query_params.get('error') %}
+  <div class="console-banner console-banner-warn">
+    <span>⚠ {{ request.query_params.get('error') }}</span>
+  </div>
+  {% elif request.query_params.get('saved') %}
+  <div class="console-banner console-banner-ok">
+    <span>✓ {{ request.query_params.get('saved') }}</span>
+  </div>
+  {% endif %}
+
+  <main class="case-main">
+
+    {% if not data.configured %}
+    <section class="card">
+      <h2>No sheet connected yet</h2>
+      <p class="muted">
+        Paste the link to your site valuation sheet and it becomes the
+        third tab on the map. The app reads the headers, works out
+        which column is which, and shows you what it found before it
+        uses any of it.
+      </p>
+      <form method="post" action="/map/site-value">
+        <p>
+          <input type="text" name="url" style="width:100%;max-width:640px"
+                 placeholder="https://docs.google.com/spreadsheets/d/…/edit?gid=…">
+        </p>
+        <p>
+          <button class="gen-btn" type="submit">Connect the sheet</button>
+        </p>
+      </form>
+      <p class="muted small">
+        A Google Sheets link with the tab you want in the <code>gid</code>
+        is best — that is the one that decides which tab is read.
+      </p>
+    </section>
+    {% else %}
+
+    {% if data.error %}
+    <section class="card" style="border-left:3px solid #c5221f">
+      <h2>The sheet could not be read</h2>
+      <p class="muted small">{{ data.error }}</p>
+      <p class="muted small">
+        Check the link, and that this Google account can see the sheet.
+        The sheet must be shared with <b>{{ auth.user.email if auth.user else 'your account' }}</b>.
+      </p>
+    </section>
+    {% endif %}
+
+    <section class="card">
+      <div class="section-head">
+        <h2>The sheet</h2>
+        <div class="section-meta">
+          <span class="meta-pill">{{ data.sites|length }} site{{ '' if data.sites|length == 1 else 's' }}</span>
+          {% if data.note %}<span class="meta-pill">{{ data.note }}</span>{% endif %}
+        </div>
+      </div>
+      <p class="muted small" style="word-break:break-all">
+        <a href="{{ data.url }}" target="_blank" rel="noopener">{{ data.url }}</a>
+      </p>
+
+      <form method="post" action="/map/site-value">
+        <p>
+          <input type="text" name="url" value="{{ data.url }}"
+                 style="width:100%;max-width:640px"
+                 placeholder="https://docs.google.com/spreadsheets/d/…/edit?gid=…">
+        </p>
+
+        <h3 style="font-size:14px;margin:1rem 0 .4rem">What each column is</h3>
+        <p class="muted small">
+          The app worked this out from the headers. Change anything it
+          got wrong — a wrong column here means a wrong pin or a wrong
+          value on the map.
+        </p>
+        <table class="content-table">
+          <thead>
+            <tr><th style="width:210px">Field</th><th>Column in your sheet</th>
+                <th class="muted small" style="width:260px">Also recognised as</th></tr>
+          </thead>
+          <tbody>
+            {% for f in fields %}
+            <tr>
+              <td><b>{{ field_labels[f] }}</b></td>
+              <td>
+                <input name="map_{{ f }}" value="{{ data.mapping.get(f, '') }}"
+                       list="hdr-{{ f }}">
+                <datalist id="hdr-{{ f }}">
+                  {% for h in data.headers %}<option value="{{ h }}"></option>{% endfor %}
+                </datalist>
+              </td>
+              <td class="muted small">
+                {{ field_aliases[f]|join(' · ') }}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+
+        {% if data.unmapped %}
+        <p class="muted small">
+          Not used for anything:
+          {% for h in data.unmapped %}<code>{{ h }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+        </p>
+        {% endif %}
+
+        <p><button class="gen-btn" type="submit">Save the mapping</button></p>
+      </form>
+    </section>
+
+    {% if data.sites %}
+    <section class="card">
+      <div class="section-head">
+        <h2>The sites</h2>
+        <div class="section-meta">
+          <span class="meta-pill">{{ data.sites|length }} rows</span>
+        </div>
+      </div>
+      <table class="content-table" id="site-table">
+        <thead>
+          <tr>
+            <th style="width:40px">Row</th>
+            <th>Site</th><th>Address</th><th>District</th>
+            <th>Site area</th><th>Value</th><th>Rate</th>
+            <th>Valued</th><th>Use</th><th>On map</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in data.sites %}
+          <tr id="site-{{ s.row }}">
+            <td class="muted small">{{ s.row }}</td>
+            <td><b>{{ s.name or '—' }}</b></td>
+            <td class="muted small">{{ s.address or '—' }}</td>
+            <td class="muted small">{{ s.district or '—' }}</td>
+            <td class="muted small">{{ s.site_area or '—' }}</td>
+            <td class="muted small">{{ s.value or '—' }}</td>
+            <td class="muted small">{{ s.rate or '—' }}</td>
+            <td class="muted small">{{ s.valuation_date or '—' }}</td>
+            <td class="muted small">{{ s.use or '—' }}</td>
+            <td class="muted small">
+              {% if s.lat is not none and s.lon is not none %}
+                <span class="meta-pill">yes</span>
+              {% else %}
+                <span class="muted">no — place it</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="muted small">
+        A site with no latitude and longitude in the sheet has no pin
+        yet. Put one on the map with the Site Value tab's “Place on map”.
+      </p>
+    </section>
+    {% endif %}
+
+    {% endif %}
+  </main>
+</body>
+</html>

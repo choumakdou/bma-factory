@@ -388,6 +388,53 @@ async def map_warm(request: Request):
         f"/map?saved={quote_plus(note)}", status_code=303)
 
 
+@app.get("/map/site-value", response_class=HTMLResponse)
+def site_value_page(request: Request) -> HTMLResponse:
+    """The Site Value tab: the sheet it reads, and what it found.
+
+    One page for both, because they are one thing: the settings
+    decide what the list means. When no sheet is connected the page
+    says so plainly and offers the form.
+    """
+    from demo import sites as S
+
+    data = S.read_sites()
+    return templates.TemplateResponse(
+        request,
+        "site_value.html",
+        {
+            "auth": _auth_state(),
+            "data": data,
+            "fields": S.FIELD_ORDER,
+            "field_labels": S.FIELD_LABELS,
+            "field_aliases": S.FIELD_ALIASES,
+            "settings": S.load_settings(),
+        },
+    )
+
+
+@app.post("/map/site-value")
+async def site_value_save(request: Request):
+    """Save the sheet URL and the column mapping."""
+    from demo import sites as S
+
+    form = await request.form()
+    url = str(form.get("url") or "").strip()
+    overrides: dict[str, str] = {}
+    for field in S.FIELD_ORDER:
+        v = str(form.get(f"map_{field}") or "").strip()
+        if v:
+            overrides[field] = v
+    ok, detail = S.save_settings(url, overrides)
+    if not ok:
+        return RedirectResponse(
+            f"/map/site-value?error=Could+not+save%3A+{detail}",
+            status_code=303)
+    return RedirectResponse(
+        "/map/site-value?saved=" + quote_plus("Settings saved"),
+        status_code=303)
+
+
 @app.get("/map", response_class=HTMLResponse)
 def map_page(request: Request) -> HTMLResponse:
     """All projects under both tabs, on an open-source map.
@@ -427,6 +474,8 @@ def map_page(request: Request) -> HTMLResponse:
                  "href": "/", "pins": groups.get("pv", [])},
                 {"id": "sbr", "label": "Sales Brochure Review",
                  "href": "/brochure", "pins": groups.get("sbr", [])},
+                {"id": "sv", "label": "Site Value",
+                 "href": "/map/site-value", "pins": groups.get("sv", [])},
             ],
         },
     )
